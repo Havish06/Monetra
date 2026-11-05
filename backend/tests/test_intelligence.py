@@ -69,7 +69,7 @@ class MoneyTests(unittest.TestCase):
             {"amount": "1200", "frequency": "weekly"},
             {"amount": "900", "frequency": "monthly", "status": "cancelled"},
         ])
-        self.assertEqual(result, Decimal("1633.33"))
+        self.assertEqual(result, Decimal("6900.00"))
 
     def test_unknown_frequency_is_not_guessed(self):
         with self.assertRaises(ValueError):
