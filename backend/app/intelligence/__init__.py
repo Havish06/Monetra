@@ -1,0 +1,1 @@
+"""Monetra deterministic intelligence primitives."""
