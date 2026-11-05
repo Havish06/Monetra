@@ -6,6 +6,7 @@ INTENT_PATTERNS = {
     "account_summary": [
         r"\b(total|overall|all) (balance|accounts?|money)\b",
         r"\b(balance|money) (across|in) (all )?(my )?accounts?\b",
+        r"\bhow much money do i have.*\baccounts?\b",
         r"\bavailable balance\b",
     ],
     "spending_total": [
