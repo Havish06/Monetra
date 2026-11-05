@@ -1,0 +1,2875 @@
+
+
+========== src\services\api.ts ==========
+
+
+import { API_BASE_URL } from "../constants/config";
+import { supabase } from "../lib/supabase";
+import { saveDashboardCache } from "../lib/appCache";
+
+export type DashboardData = {
+  total_account_balance: number;
+  monthly_income: number;
+  monthly_expenses: number;
+  monthly_net: number;
+  total_savings_target: number;
+  total_saved: number;
+  upcoming_commitments_count: number;
+  accounts: any[];
+  recent_transactions: any[];
+  budgets: any[];
+  savings_goals: any[];
+  upcoming_commitments: any[];
+};
+
+async function authenticatedFetch(path: string): Promise<Response> {
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession();
+
+  if (error || !session) {
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+
+    console.error("API ERROR:", response.status, errorBody);
+
+    throw new Error(
+      `Request failed (${response.status}): ${errorBody}`
+    );
+  }
+
+  return response;
+}
+
+export async function getDashboard(
+  userId: string
+): Promise<DashboardData> {
+  if (!userId || userId === "undefined") {
+    throw new Error("Monetra profile ID is missing.");
+  }
+
+  const response = await authenticatedFetch(
+    `/api/v1/users/${userId}/dashboard`
+  );
+
+  const dashboard: DashboardData = await response.json();
+
+  await saveDashboardCache(userId, dashboard);
+
+  return dashboard;
+}
+
+
+========== src\context\AuthContext.tsx ==========
+
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+
+import { Session } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
+import { API_BASE_URL } from "../constants/config";
+import {
+  getProfileCache,
+  saveProfileCache,
+  clearUserCache,
+} from "../lib/appCache";
+
+export type Profile = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  currency: string;
+  timezone: string;
+};
+
+type ProfileUpdates = {
+  full_name?: string;
+  currency?: string;
+  timezone?: string;
+};
+
+type AuthContextType = {
+  session: Session | null;
+  profile: Profile | null;
+  loading: boolean;
+  signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  updateProfile: (updates: ProfileUpdates) => Promise<void>;
+};
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function syncProfile(
+    accessToken: string,
+    authUserId: string
+  ): Promise<Profile> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/profile/me`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(
+          error.detail || "Could not set up your Monetra profile"
+        );
+      }
+
+      const data: Profile = await response.json();
+
+      setProfile(data);
+      await saveProfileCache(authUserId, data);
+
+      return data;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error("Backend connection timed out.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function establishSession(currentSession: Session) {
+    setSession(currentSession);
+
+    const cachedProfile = await getProfileCache(
+      currentSession.user.id
+    );
+
+    if (cachedProfile) {
+      setProfile(cachedProfile);
+      setLoading(false);
+
+      // Refresh profile without blocking the app.
+      syncProfile(
+        currentSession.access_token,
+        currentSession.user.id
+      ).catch((error) => {
+        console.error("Background profile sync failed:", error);
+      });
+
+      return;
+    }
+
+    // First login: create or retrieve the backend profile.
+    await syncProfile(
+      currentSession.access_token,
+      currentSession.user.id
+    );
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event, currentSession) => {
+        if (!mounted) return;
+
+        setSession(currentSession);
+
+        if (!currentSession) {
+          setProfile(null);
+          setLoading(false);
+        }
+      }
+    );
+
+    async function initialize() {
+      try {
+        const {
+          data: { session: currentSession },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (!mounted) return;
+        if (error) throw error;
+
+        if (!currentSession) {
+          setSession(null);
+          setProfile(null);
+          return;
+        }
+
+        const cachedProfile = await getProfileCache(
+          currentSession.user.id
+        );
+
+        if (!mounted) return;
+
+        setSession(currentSession);
+
+        if (cachedProfile) {
+          setProfile(cachedProfile);
+          setLoading(false);
+
+          syncProfile(
+            currentSession.access_token,
+            currentSession.user.id
+          ).catch((error) => {
+            console.error("Background profile sync failed:", error);
+          });
+        } else {
+          await syncProfile(
+            currentSession.access_token,
+            currentSession.user.id
+          );
+        }
+      } catch (error) {
+        console.error("Profile setup failed:", error);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    initialize();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function signUp(
+    email: string,
+    password: string,
+    fullName: string
+  ) {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: fullName },
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.session) {
+        await establishSession(data.session);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function signIn(email: string, password: string) {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      if (data.session) {
+        await establishSession(data.session);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateProfile(updates: ProfileUpdates) {
+    if (!session) {
+      throw new Error("Please sign in again.");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/profile/me`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updates),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || "Could not update your profile");
+    }
+
+    const updatedProfile: Profile = await response.json();
+
+    setProfile(updatedProfile);
+    await saveProfileCache(session.user.id, updatedProfile);
+  }
+
+  async function signOut() {
+    const authUserId = session?.user.id;
+
+    const { error } = await supabase.auth.signOut();
+
+    if (error) throw error;
+
+    if (authUserId) {
+      await clearUserCache(authUserId);
+    }
+
+    setProfile(null);
+    setSession(null);
+  }
+
+  return (
+    <AuthContext.Provider
+      value={{
+        session,
+        profile,
+        loading,
+        signUp,
+        signIn,
+        signOut,
+        updateProfile,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used inside AuthProvider");
+  }
+
+  return context;
+}
+
+
+========== src\constants\theme.ts ==========
+
+
+export const theme = {
+  colors: {
+    background: "#101110",
+    surface: "#191C19",
+    surfaceElevated: "#222620",
+    border: "#2A3029",
+
+    primary: "#C5F277",
+    primaryMuted: "#849F50",
+
+    text: "#E8EAE4",
+    secondary: "#9A9F95",
+    muted: "#686F65",
+
+    warning: "#E7B66D",
+    danger: "#E47777",
+    success: "#A9D875",
+  },
+
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 12,
+    lg: 16,
+    xl: 24,
+    xxl: 32,
+    xxxl: 40,
+  },
+
+  radius: {
+    sm: 10,
+    md: 16,
+    lg: 22,
+    xl: 28,
+    pill: 999,
+  },
+
+  typography: {
+    small: 12,
+    body: 14,
+    subtitle: 16,
+    heading: 22,
+    display: 34,
+  },
+} as const;
+
+
+========== src\constants\config.ts ==========
+
+export const API_BASE_URL = "http://192.168.0.106:8000";
+
+
+========== src\app\(tabs)\_layout.tsx ==========
+
+
+import { Tabs } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { theme } from "../../constants/theme";
+
+const tabs = [
+  { name: "index", title: "Home", icon: "grid-outline", active: "grid" },
+  { name: "decide", title: "Decide", icon: "scan-outline", active: "scan" },
+  { name: "plans", title: "Plans", icon: "calendar-outline", active: "calendar" },
+  { name: "bills", title: "Bills", icon: "repeat-outline", active: "repeat" },
+  { name: "ai", title: "Monetra AI", icon: "sparkles-outline", active: "sparkles" },
+] as const;
+
+export default function TabLayout() {
+  return (
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: theme.colors.primary,
+        tabBarInactiveTintColor: theme.colors.muted,
+        tabBarStyle: {
+          backgroundColor: theme.colors.background,
+          borderTopColor: theme.colors.border,
+          height: 66,
+          paddingTop: 8,
+          paddingBottom: 8,
+          elevation: 0,
+        },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: "500",
+        },
+      }}
+    >
+      {tabs.map((tab) => (
+        <Tabs.Screen
+          key={tab.name}
+          name={tab.name}
+          options={{
+            title: tab.title,
+            tabBarIcon: ({ color, focused, size }) => (
+              <Ionicons
+                name={(focused ? tab.active : tab.icon) as any}
+                size={size}
+                color={color}
+              />
+            ),
+          }}
+        />
+      ))}
+    </Tabs>
+  );
+}
+
+
+========== src\app\(tabs)\index.tsx ==========
+
+
+import { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  ScrollView,
+} from "react-native";
+
+import { Ionicons } from "@expo/vector-icons";
+import { getDashboardCache } from "../../lib/appCache";
+import { Screen } from "../../components/ui/Screen";
+import { SectionHeader } from "../../components/ui/SectionHeader";
+import { BalanceCard } from "../../components/dashboard/BalanceCard";
+import { theme } from "../../constants/theme";
+import { getDashboard, type DashboardData } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
+import { useRouter } from "expo-router";
+
+export default function HomeScreen() {
+  const { profile, loading: authLoading } = useAuth();
+
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+
+  const router = useRouter();
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!profile?.id) {
+      setLoading(false);
+      setData(null);
+      setError("Your Monetra profile is unavailable. Please sign in again.");
+      return;
+    }
+
+    let active = true;
+
+    async function initializeDashboard() {
+      setError(null);
+
+      // Show the loading screen only when no data is available.
+      if (!data) {
+        setLoading(true);
+      }
+
+      try {
+        // 1. Read cached dashboard first.
+        const cached = await getDashboardCache(profile!.id);
+
+        if (!active) return;
+
+        // 2. Display cached data immediately.
+        if (cached) {
+          setData(cached);
+          setLoading(false);
+        }
+
+        // 3. Fetch fresh data from the backend.
+        const fresh = await getDashboard(profile!.id);
+
+        if (!active) return;
+
+        // 4. Replace cached data with fresh data.
+        setData(fresh);
+        setError(null);
+      } catch (err: unknown) {
+        if (!active) return;
+
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Unable to load your dashboard.";
+
+        setError(message);
+
+        // Keep cached data visible if the request fails.
+        console.error("Dashboard refresh failed:", message);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    initializeDashboard();
+
+    return () => {
+      active = false;
+    };
+  }, [authLoading, profile?.id, retry]);
+
+  if (authLoading || (loading && !data)) {
+    return (
+      <Screen>
+        <View style={styles.state}>
+          <ActivityIndicator
+            size="large"
+            color={theme.colors.primary}
+          />
+
+          <Text style={styles.stateText}>
+            Loading your Monetra dashboard...
+          </Text>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <Screen>
+        <View style={styles.state}>
+          <Ionicons
+            name="cloud-offline-outline"
+            size={36}
+            color={theme.colors.warning}
+          />
+
+          <Text style={styles.stateTitle}>
+            Couldn't load your dashboard
+          </Text>
+
+          <Text style={styles.stateText}>
+            {error}
+          </Text>
+
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => setRetry((value) => value + 1)}
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!data) return null;
+
+  const firstName =
+    profile?.full_name?.trim().split(/\s+/)[0] || "there";
+
+  return (
+    <Screen>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+      >
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.eyebrow}>
+              YOUR FINANCIAL OVERVIEW
+            </Text>
+
+            <Text style={styles.greeting}>
+              Welcome, {firstName}.
+            </Text>
+          </View>
+
+          <Pressable
+            style={styles.notification}
+            onPress={() => router.push("/profile")}
+          >
+            <Ionicons
+              name="person-circle-outline"
+              size={23}
+              color={theme.colors.text}
+            />
+          </Pressable>
+        </View>
+
+        <Text style={styles.demoLabel}>
+          LIVE DATA · YOUR MONETRA ACCOUNTS
+        </Text>
+
+        <BalanceCard
+          available={data.total_account_balance}
+          income={data.monthly_income}
+          spent={data.monthly_expenses}
+        />
+
+        <View style={styles.insight}>
+          <View style={styles.insightIcon}>
+            <Ionicons
+              name="sparkles"
+              size={17}
+              color={theme.colors.primary}
+            />
+          </View>
+
+          <View style={styles.insightContent}>
+            <Text style={styles.insightLabel}>
+              MONETRA OVERVIEW
+            </Text>
+
+            <Text style={styles.insightText}>
+              Your monthly net cash flow is{" "}
+              {formatCurrency(data.monthly_net)}. You have{" "}
+              {data.upcoming_commitments_count} upcoming commitments
+              to keep in mind.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title="Savings progress" />
+
+          <View style={styles.statCard}>
+            <View style={styles.statRow}>
+              <Text style={styles.statLabel}>Total saved</Text>
+
+              <Text style={styles.statValue}>
+                {formatCurrency(data.total_saved)}
+              </Text>
+            </View>
+
+            <View style={styles.statRow}>
+              <Text style={styles.statLabel}>Savings target</Text>
+
+              <Text style={styles.statValue}>
+                {formatCurrency(data.total_savings_target)}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title="Upcoming commitments" />
+
+          {data.upcoming_commitments.length === 0 ? (
+            <Text style={styles.emptyText}>
+              No upcoming commitments. You're all clear!
+            </Text>
+          ) : (
+            data.upcoming_commitments.map(
+              (item: any, index: number) => (
+                <View
+                  key={item.id ?? index}
+                  style={styles.commitment}
+                >
+                  <View style={styles.commitmentIcon}>
+                    <Ionicons
+                      name="calendar-outline"
+                      size={19}
+                      color={theme.colors.primary}
+                    />
+                  </View>
+
+                  <View style={styles.commitmentInfo}>
+                    <Text style={styles.commitmentTitle}>
+                      {item.title ?? item.name ?? "Commitment"}
+                    </Text>
+
+                    <Text style={styles.commitmentSubtitle}>
+                      {item.due_date
+                        ? String(item.due_date).slice(0, 10)
+                        : "Upcoming"}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.commitmentAmount}>
+                    {formatCurrency(item.amount ?? 0)}
+                  </Text>
+                </View>
+              )
+            )
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title="Quick actions" />
+
+          <View style={styles.actions}>
+            <Pressable style={styles.action}>
+              <Ionicons
+                name="scan-outline"
+                size={21}
+                color={theme.colors.primary}
+              />
+
+              <Text style={styles.actionText}>
+                Check purchase
+              </Text>
+            </Pressable>
+
+            <Pressable style={styles.action}>
+              <Ionicons
+                name="add-circle-outline"
+                size={21}
+                color={theme.colors.primary}
+              />
+
+              <Text style={styles.actionText}>
+                Add subscription
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {error && data && (
+          <Text style={styles.refreshNotice}>
+            Showing saved data. Couldn't refresh right now.
+          </Text>
+        )}
+      </ScrollView>
+    </Screen>
+  );
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(Number(value) || 0);
+}
+
+const styles = StyleSheet.create({
+  content: {
+    gap: 22,
+    paddingBottom: 30,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  eyebrow: {
+    color: theme.colors.secondary,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: "600",
+    marginBottom: 7,
+  },
+  greeting: {
+    color: theme.colors.text,
+    fontSize: 23,
+    fontWeight: "600",
+    letterSpacing: -0.7,
+  },
+  notification: {
+    height: 44,
+    width: 44,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  demoLabel: {
+    color: theme.colors.secondary,
+    fontSize: 9,
+    letterSpacing: 1,
+    fontWeight: "600",
+  },
+  insight: {
+    flexDirection: "row",
+    backgroundColor: "#20291B",
+    borderColor: "#39472D",
+    borderWidth: 1,
+    borderRadius: theme.radius.lg,
+    padding: 15,
+    gap: 12,
+  },
+  insightIcon: {
+    height: 32,
+    width: 32,
+    borderRadius: 11,
+    backgroundColor: "#34452A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  insightContent: {
+    flex: 1,
+    gap: 6,
+  },
+  insightLabel: {
+    color: theme.colors.primary,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.1,
+  },
+  insightText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  section: {
+    gap: 13,
+  },
+  statCard: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    padding: 16,
+    gap: 16,
+  },
+  statRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  statLabel: {
+    color: theme.colors.secondary,
+    fontSize: 13,
+  },
+  statValue: {
+    color: theme.colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  emptyText: {
+    color: theme.colors.secondary,
+    fontSize: 13,
+  },
+  commitment: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    padding: 13,
+    gap: 12,
+  },
+  commitmentIcon: {
+    height: 38,
+    width: 38,
+    borderRadius: 12,
+    backgroundColor: "#34452A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  commitmentInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  commitmentTitle: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  commitmentSubtitle: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+  },
+  commitmentAmount: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  action: {
+    flex: 1,
+    minHeight: 95,
+    padding: 14,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    justifyContent: "space-between",
+  },
+  actionText: {
+    color: theme.colors.text,
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  state: {
+    flex: 1,
+    minHeight: 300,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 14,
+  },
+  stateTitle: {
+    color: theme.colors.text,
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  stateText: {
+    color: theme.colors.secondary,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  retryButton: {
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: theme.radius.pill,
+    marginTop: 8,
+  },
+  retryText: {
+    color: theme.colors.background,
+    fontWeight: "700",
+  },
+  refreshNotice: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+    textAlign: "center",
+    paddingBottom: 8,
+  },
+});
+
+
+========== src\app\(tabs)\bills.tsx ==========
+
+
+import { Text, StyleSheet } from "react-native";
+import { Screen } from "../../components/ui/Screen";
+import { theme } from "../../constants/theme";
+
+export default function BillsScreen() {
+  return (
+    <Screen>
+      <Text style={styles.title}>Subscription watchtower.</Text>
+      <Text style={styles.subtitle}>
+        Keep track of trials, recurring payments and renewals.
+      </Text>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  title: { color: theme.colors.text, fontSize: 26, fontWeight: "700" },
+  subtitle: { color: theme.colors.secondary, fontSize: 14 },
+});
+
+
+========== src\app\(tabs)\plans.tsx ==========
+
+
+import { Text, StyleSheet } from "react-native";
+import { Screen } from "../../components/ui/Screen";
+import { theme } from "../../constants/theme";
+
+export default function PlansScreen() {
+  return (
+    <Screen>
+      <Text style={styles.title}>Your plans.</Text>
+      <Text style={styles.subtitle}>
+        Upcoming events, expenses and financial commitments.
+      </Text>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  title: { color: theme.colors.text, fontSize: 26, fontWeight: "700" },
+  subtitle: { color: theme.colors.secondary, fontSize: 14 },
+});
+
+
+========== src\app\(tabs)\decide.tsx ==========
+
+
+import { Text, StyleSheet } from "react-native";
+import { Screen } from "../../components/ui/Screen";
+import { theme } from "../../constants/theme";
+
+export default function DecideScreen() {
+  return (
+    <Screen>
+      <Text style={styles.title}>Make better decisions.</Text>
+      <Text style={styles.subtitle}>
+        Evaluate purchases before committing your money.
+      </Text>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  title: { color: theme.colors.text, fontSize: 26, fontWeight: "700" },
+  subtitle: { color: theme.colors.secondary, fontSize: 14 },
+});
+
+
+========== src\app\(tabs)\ai.tsx ==========
+
+import { StyleSheet, Text, View } from "react-native";
+import { Screen } from "../../components/ui/Screen";
+import { theme } from "../../constants/theme";
+
+export default function AiScreen() {
+  return (
+    <Screen>
+      <View style={styles.container}>
+        <Text style={styles.title}>Your financial companion.</Text>
+        <Text style={styles.subtitle}>
+          Ask Monetra about your money, purchases, subscriptions, bookings
+          and plans.
+        </Text>
+      </View>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    gap: 12,
+  },
+  title: {
+    color: theme.colors.text,
+    fontSize: 26,
+    fontWeight: "700",
+  },
+  subtitle: {
+    color: theme.colors.secondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+});
+
+
+========== src\components\ui\Screen.tsx ==========
+
+import {
+  ScrollView,
+  StyleSheet,
+  View,
+  type ViewStyle,
+} from "react-native";
+
+import { SafeAreaView } from "react-native-safe-area-context";
+import type { ReactNode } from "react";
+import { theme } from "../../constants/theme";
+
+type Props = {
+  children: ReactNode;
+  style?: ViewStyle;
+  scroll?: boolean;
+};
+
+export function Screen({ children, style, scroll = true }: Props) {
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      {scroll ? (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.content, style]}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={[styles.content, style]}>{children}</View>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  content: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.lg,
+    paddingBottom: 36,
+    gap: theme.spacing.xl,
+  },
+});
+
+
+========== src\components\ui\Surface.tsx ==========
+
+
+import { View, StyleSheet, type ViewStyle } from "react-native";
+import type { ReactNode } from "react";
+import { theme } from "../../constants/theme";
+
+type Props = {
+  children: ReactNode;
+  style?: ViewStyle;
+};
+
+export function Surface({ children, style }: Props) {
+  return <View style={[styles.surface, style]}>{children}</View>;
+}
+
+const styles = StyleSheet.create({
+  surface: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.lg,
+  },
+});
+
+
+========== src\lib\appCache.ts ==========
+
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { Profile } from "../context/AuthContext";
+import type { DashboardData } from "../services/api";
+
+const profileKey = (userId: string) => `monetra_profile_${userId}`;
+const dashboardKey = (userId: string) => `monetra_dashboard_${userId}`;
+
+export async function saveProfileCache(
+  userId: string,
+  profile: Profile
+) {
+  try {
+    await AsyncStorage.setItem(
+      profileKey(userId),
+      JSON.stringify(profile)
+    );
+  } catch (error) {
+    console.warn("Profile cache save failed:", error);
+  }
+}
+
+export async function getProfileCache(
+  userId: string
+): Promise<Profile | null> {
+  try {
+    const value = await AsyncStorage.getItem(profileKey(userId));
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDashboardCache(
+  userId: string,
+  dashboard: DashboardData
+) {
+  try {
+    await AsyncStorage.setItem(
+      dashboardKey(userId),
+      JSON.stringify(dashboard)
+    );
+  } catch (error) {
+    console.warn("Dashboard cache save failed:", error);
+  }
+}
+
+export async function getDashboardCache(
+  userId: string
+): Promise<DashboardData | null> {
+  try {
+    const value = await AsyncStorage.getItem(dashboardKey(userId));
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearUserCache(userId: string) {
+  try {
+    await AsyncStorage.multiRemove([
+      profileKey(userId),
+      dashboardKey(userId),
+    ]);
+  } catch (error) {
+    console.warn("Cache clear failed:", error);
+  }
+}
+
+
+========== backend\app\main.py ==========
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.db.database import test_connection
+from fastapi import FastAPI, HTTPException
+from app.api.financial_accounts import router as financial_accounts_router
+from app.api.transactions import router as transactions_router
+from app.api.budgets import router as budgets_router
+
+from app.api.savings_goals import router as savings_goals_router
+from app.api.savings_contributions import router as savings_contributions_router
+from app.api.commitments import router as commitments_router
+from app.api.dashboard import router as dashboard_router
+from app.api.profile import router as profile_router
+
+
+app = FastAPI(
+    title="Monetra API",
+    description="Intelligent Financial Orchestration",
+    version="0.1.0",
+)
+app.include_router(financial_accounts_router)
+app.include_router(transactions_router)
+app.include_router(budgets_router)
+app.include_router(savings_goals_router)
+app.include_router(savings_contributions_router)
+app.include_router(commitments_router)
+app.include_router(dashboard_router)
+app.include_router(profile_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Restrict this before production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def root():
+    return {
+        "app": "Monetra",
+        "status": "running",
+        "version": "0.1.0",
+    }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+@app.get("/health/database")
+def database_health():
+    try:
+        result = test_connection()
+        return {
+            "status": "connected",
+            "database": "supabase-postgresql",
+            "test_query": result,
+        }
+    except Exception as e:
+        print("DATABASE ERROR:", repr(e))
+        raise HTTPException(
+            status_code=503,
+            detail=str(e),
+        )
+
+@app.get("/api/v1/dashboard")
+def get_dashboard():
+    return {
+        "user": {
+            "firstName": "there"
+        },
+        "currency": "INR",
+        "balance": {
+            "available": 24500,
+            "income": 45000,
+            "spent": 12800,
+            "committed": 7700,
+            "savings": 5000
+        },
+        "cashFlow": [
+            {"day": "01", "amount": 45000},
+            {"day": "05", "amount": 39000},
+            {"day": "10", "amount": 35000},
+            {"day": "15", "amount": 31800},
+            {"day": "20", "amount": 28500},
+            {"day": "25", "amount": 24500}
+        ],
+        "upcoming": [
+            {
+                "id": "1",
+                "title": "Internet bill",
+                "subtitle": "Tomorrow · Utilities",
+                "amount": 999,
+                "type": "bill"
+            },
+            {
+                "id": "2",
+                "title": "Design tool trial",
+                "subtitle": "In 3 days · Trial ending",
+                "amount": 799,
+                "type": "trial"
+            },
+            {
+                "id": "3",
+                "title": "Dinner with friends",
+                "subtitle": "Nov 16 · Lifestyle",
+                "amount": 1200,
+                "type": "event"
+            }
+        ]
+    }
+
+
+========== backend\app\api\transactions.py ==========
+
+import uuid
+
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.models.user import User
+from app.models.financial_account import FinancialAccount
+from app.models.transaction import Transaction
+
+from app.core.security import require_path_user
+
+from app.schemas.transaction import (
+    TransactionCreate,
+    TransactionUpdate,
+    TransactionResponse,
+)
+
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/transactions",
+    tags=["Transactions"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def verify_user(user_id: uuid.UUID, db: Session):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+def verify_account(
+    user_id: uuid.UUID,
+    account_id: uuid.UUID | None,
+    db: Session,
+):
+    if account_id is None:
+        return
+
+    account = db.query(FinancialAccount).filter(
+        FinancialAccount.id == account_id,
+        FinancialAccount.user_id == user_id,
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="Financial account not found",
+        )
+
+
+@router.post(
+    "",
+    response_model=TransactionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_transaction(
+    user_id: uuid.UUID,
+    transaction: TransactionCreate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+    verify_account(user_id, transaction.account_id, db)
+
+    new_transaction = Transaction(
+        user_id=user_id,
+        **transaction.model_dump(),
+    )
+
+    db.add(new_transaction)
+    db.commit()
+    db.refresh(new_transaction)
+
+    return new_transaction
+
+
+@router.get("", response_model=list[TransactionResponse])
+def list_transactions(
+    user_id: uuid.UUID,
+    transaction_type: str | None = Query(
+        default=None,
+        pattern=r"^(income|expense)$",
+    ),
+    category: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    account_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    query = db.query(Transaction).filter(
+        Transaction.user_id == user_id
+    )
+
+    if transaction_type:
+        query = query.filter(
+            Transaction.transaction_type == transaction_type
+        )
+
+    if category:
+        query = query.filter(Transaction.category == category)
+
+    if start_date:
+        query = query.filter(
+            Transaction.transaction_date >= start_date
+        )
+
+    if end_date:
+        query = query.filter(
+            Transaction.transaction_date <= end_date
+        )
+
+    if account_id:
+        query = query.filter(Transaction.account_id == account_id)
+
+    return query.order_by(
+        Transaction.transaction_date.desc()
+    ).all()
+
+
+@router.get("/{transaction_id}", response_model=TransactionResponse)
+def get_transaction(
+    user_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    transaction = db.query(Transaction).filter(
+        Transaction.id == transaction_id,
+        Transaction.user_id == user_id,
+    ).first()
+
+    if not transaction:
+        raise HTTPException(
+            status_code=404,
+            detail="Transaction not found",
+        )
+
+    return transaction
+
+
+@router.patch("/{transaction_id}", response_model=TransactionResponse)
+def update_transaction(
+    user_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+    updates: TransactionUpdate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    transaction = db.query(Transaction).filter(
+        Transaction.id == transaction_id,
+        Transaction.user_id == user_id,
+    ).first()
+
+    if not transaction:
+        raise HTTPException(
+            status_code=404,
+            detail="Transaction not found",
+        )
+
+    update_data = updates.model_dump(exclude_unset=True)
+
+    verify_account(user_id, update_data.get("account_id"), db)
+
+    for field, value in update_data.items():
+        setattr(transaction, field, value)
+
+    db.commit()
+    db.refresh(transaction)
+
+    return transaction
+
+
+@router.delete(
+    "/{transaction_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_transaction(
+    user_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    transaction = db.query(Transaction).filter(
+        Transaction.id == transaction_id,
+        Transaction.user_id == user_id,
+    ).first()
+
+    if not transaction:
+        raise HTTPException(
+            status_code=404,
+            detail="Transaction not found",
+        )
+
+    db.delete(transaction)
+    db.commit()
+
+
+========== backend\app\api\financial_accounts.py ==========
+
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.models.user import User
+
+from app.core.security import require_path_user
+
+from app.models.financial_account import FinancialAccount
+from app.schemas.financial_account import (
+    FinancialAccountCreate,
+    FinancialAccountUpdate,
+    FinancialAccountResponse,
+)
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/accounts",
+    tags=["Financial Accounts"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+@router.post(
+    "",
+    response_model=FinancialAccountResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_account(
+    user_id: uuid.UUID,
+    account: FinancialAccountCreate,
+    db: Session = Depends(get_db),
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_account = FinancialAccount(
+        user_id=user_id,
+        **account.model_dump(),
+    )
+
+    db.add(new_account)
+    db.commit()
+    db.refresh(new_account)
+
+    return new_account
+
+
+@router.get("", response_model=list[FinancialAccountResponse])
+def list_accounts(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return (
+        db.query(FinancialAccount)
+        .filter(FinancialAccount.user_id == user_id)
+        .order_by(FinancialAccount.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/{account_id}", response_model=FinancialAccountResponse)
+def get_account(
+    user_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    account = db.query(FinancialAccount).filter(
+        FinancialAccount.id == account_id,
+        FinancialAccount.user_id == user_id,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    return account
+
+
+@router.patch("/{account_id}", response_model=FinancialAccountResponse)
+def update_account(
+    user_id: uuid.UUID,
+    account_id: uuid.UUID,
+    updates: FinancialAccountUpdate,
+    db: Session = Depends(get_db),
+):
+    account = db.query(FinancialAccount).filter(
+        FinancialAccount.id == account_id,
+        FinancialAccount.user_id == user_id,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    update_data = updates.model_dump(exclude_unset=True)
+
+    required_fields = {"name", "account_type", "balance", "currency"}
+
+    if any(
+        field in update_data and update_data[field] is None
+        for field in required_fields
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Required account fields cannot be null",
+        )
+
+    for field, value in update_data.items():
+        setattr(account, field, value)
+
+    db.commit()
+    db.refresh(account)
+
+    return account
+
+
+@router.delete(
+    "/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_account(
+    user_id: uuid.UUID,
+    account_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    account = db.query(FinancialAccount).filter(
+        FinancialAccount.id == account_id,
+        FinancialAccount.user_id == user_id,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    db.delete(account)
+    db.commit()
+
+
+========== backend\app\api\budgets.py ==========
+
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+
+from app.core.security import require_path_user
+
+from app.models.user import User
+from app.models.budget import Budget
+from app.models.transaction import Transaction
+
+from app.schemas.budget import (
+    BudgetCreate,
+    BudgetUpdate,
+    BudgetResponse,
+    BudgetSummary,
+)
+
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/budgets",
+    tags=["Budgets"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def verify_user(user_id: uuid.UUID, db: Session):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+def calculate_spent(
+    user_id: uuid.UUID,
+    budget: Budget,
+    db: Session,
+) -> Decimal:
+    query = db.query(
+        func.coalesce(func.sum(Transaction.amount), 0)
+    ).filter(
+        Transaction.user_id == user_id,
+        Transaction.transaction_type == "expense",
+        Transaction.category == budget.category,
+        Transaction.transaction_date >= budget.start_date,
+    )
+
+    if budget.end_date:
+        query = query.filter(
+            Transaction.transaction_date < (
+                budget.end_date + timedelta(days=1)
+            )
+        )
+
+    return Decimal(str(query.scalar()))
+
+
+def make_summary(
+    user_id: uuid.UUID,
+    budget: Budget,
+    db: Session,
+) -> BudgetSummary:
+    spent = calculate_spent(user_id, budget, db)
+    remaining = budget.limit_amount - spent
+
+    utilization = (
+        spent / budget.limit_amount * Decimal("100")
+    ).quantize(Decimal("0.01"))
+
+    return BudgetSummary(
+        budget=budget,
+        spent=spent,
+        remaining=remaining,
+        utilization_percentage=utilization,
+        is_exceeded=spent > budget.limit_amount,
+    )
+
+
+@router.post(
+    "",
+    response_model=BudgetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_budget(
+    user_id: uuid.UUID,
+    budget: BudgetCreate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    if budget.end_date and budget.end_date < budget.start_date:
+        raise HTTPException(
+            status_code=422,
+            detail="End date cannot be before start date",
+        )
+
+    if budget.period == "custom" and not budget.end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Custom budgets require an end date",
+        )
+
+    new_budget = Budget(
+        user_id=user_id,
+        **budget.model_dump(),
+    )
+
+    db.add(new_budget)
+    db.commit()
+    db.refresh(new_budget)
+
+    return new_budget
+
+
+@router.get("", response_model=list[BudgetResponse])
+def list_budgets(
+    user_id: uuid.UUID,
+    period: str | None = Query(
+        default=None,
+        pattern=r"^(weekly|monthly|yearly|custom)$",
+    ),
+    category: str | None = None,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    query = db.query(Budget).filter(
+        Budget.user_id == user_id
+    )
+
+    if period:
+        query = query.filter(Budget.period == period)
+
+    if category:
+        query = query.filter(Budget.category == category)
+
+    return query.order_by(Budget.created_at.desc()).all()
+
+
+@router.get("/summary", response_model=list[BudgetSummary])
+def list_budget_summaries(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    budgets = db.query(Budget).filter(
+        Budget.user_id == user_id
+    ).all()
+
+    return [
+        make_summary(user_id, budget, db)
+        for budget in budgets
+    ]
+
+
+@router.get("/{budget_id}/summary", response_model=BudgetSummary)
+def get_budget_summary(
+    user_id: uuid.UUID,
+    budget_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    budget = db.query(Budget).filter(
+        Budget.id == budget_id,
+        Budget.user_id == user_id,
+    ).first()
+
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    return make_summary(user_id, budget, db)
+
+
+@router.get("/{budget_id}", response_model=BudgetResponse)
+def get_budget(
+    user_id: uuid.UUID,
+    budget_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    budget = db.query(Budget).filter(
+        Budget.id == budget_id,
+        Budget.user_id == user_id,
+    ).first()
+
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    return budget
+
+
+@router.patch("/{budget_id}", response_model=BudgetResponse)
+def update_budget(
+    user_id: uuid.UUID,
+    budget_id: uuid.UUID,
+    updates: BudgetUpdate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    budget = db.query(Budget).filter(
+        Budget.id == budget_id,
+        Budget.user_id == user_id,
+    ).first()
+
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    update_data = updates.model_dump(exclude_unset=True)
+
+    if (
+        "end_date" in update_data
+        and update_data["end_date"] is None
+        and update_data.get("period", budget.period) == "custom"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Custom budgets require an end date",
+        )
+
+    new_start = update_data.get("start_date", budget.start_date)
+    new_end = update_data.get("end_date", budget.end_date)
+    new_period = update_data.get("period", budget.period)
+
+    if new_end and new_end < new_start:
+        raise HTTPException(
+            status_code=422,
+            detail="End date cannot be before start date",
+        )
+
+    if new_period == "custom" and not new_end:
+        raise HTTPException(
+            status_code=422,
+            detail="Custom budgets require an end date",
+        )
+
+    for field, value in update_data.items():
+        setattr(budget, field, value)
+
+    db.commit()
+    db.refresh(budget)
+
+    return budget
+
+
+@router.delete(
+    "/{budget_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_budget(
+    user_id: uuid.UUID,
+    budget_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    budget = db.query(Budget).filter(
+        Budget.id == budget_id,
+        Budget.user_id == user_id,
+    ).first()
+
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+
+    db.delete(budget)
+    db.commit()
+
+
+========== backend\app\api\savings_goals.py ==========
+
+import uuid
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.models.user import User
+from app.models.savings_goal import SavingsGoal
+from app.models.savings_contribution import SavingsContribution
+
+from app.core.security import require_path_user
+
+from app.schemas.savings_goal import (
+    SavingsGoalCreate,
+    SavingsGoalUpdate,
+    SavingsGoalResponse,
+    SavingsGoalSummary,
+)
+
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/savings-goals",
+    tags=["Savings Goals"],
+
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def verify_user(user_id: uuid.UUID, db: Session):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+def calculate_summary(
+    user_id: uuid.UUID,
+    goal: SavingsGoal,
+    db: Session,
+) -> SavingsGoalSummary:
+    total = db.query(
+        func.coalesce(func.sum(SavingsContribution.amount), 0)
+    ).filter(
+        SavingsContribution.goal_id == goal.id,
+        SavingsContribution.user_id == user_id,
+    ).scalar()
+
+    total_saved = Decimal(str(total))
+    remaining = max(goal.target_amount - total_saved, Decimal("0"))
+
+    progress = min(
+        total_saved / goal.target_amount * Decimal("100"),
+        Decimal("100"),
+    ).quantize(Decimal("0.01"))
+
+    return SavingsGoalSummary(
+        goal=goal,
+        total_saved=total_saved,
+        remaining=remaining,
+        progress_percentage=progress,
+        is_completed=total_saved >= goal.target_amount,
+    )
+
+
+@router.post(
+    "",
+    response_model=SavingsGoalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_goal(
+    user_id: uuid.UUID,
+    goal: SavingsGoalCreate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    new_goal = SavingsGoal(
+        user_id=user_id,
+        **goal.model_dump(),
+    )
+
+    db.add(new_goal)
+    db.commit()
+    db.refresh(new_goal)
+
+    return new_goal
+
+
+@router.get("", response_model=list[SavingsGoalResponse])
+def list_goals(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    return db.query(SavingsGoal).filter(
+        SavingsGoal.user_id == user_id
+    ).order_by(SavingsGoal.created_at.desc()).all()
+
+
+@router.get("/summary", response_model=list[SavingsGoalSummary])
+def list_goal_summaries(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    goals = db.query(SavingsGoal).filter(
+        SavingsGoal.user_id == user_id
+    ).all()
+
+    return [
+        calculate_summary(user_id, goal, db)
+        for goal in goals
+    ]
+
+
+@router.get("/{goal_id}", response_model=SavingsGoalResponse)
+def get_goal(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    goal = db.query(SavingsGoal).filter(
+        SavingsGoal.id == goal_id,
+        SavingsGoal.user_id == user_id,
+    ).first()
+
+    if not goal:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    return goal
+
+
+@router.get("/{goal_id}/summary", response_model=SavingsGoalSummary)
+def get_goal_summary(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    goal = db.query(SavingsGoal).filter(
+        SavingsGoal.id == goal_id,
+        SavingsGoal.user_id == user_id,
+    ).first()
+
+    if not goal:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    return calculate_summary(user_id, goal, db)
+
+
+@router.patch("/{goal_id}", response_model=SavingsGoalResponse)
+def update_goal(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    updates: SavingsGoalUpdate,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    goal = db.query(SavingsGoal).filter(
+        SavingsGoal.id == goal_id,
+        SavingsGoal.user_id == user_id,
+    ).first()
+
+    if not goal:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    update_data = updates.model_dump(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(goal, field, value)
+
+    db.commit()
+    db.refresh(goal)
+
+    return goal
+
+
+@router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_goal(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(user_id, db)
+
+    goal = db.query(SavingsGoal).filter(
+        SavingsGoal.id == goal_id,
+        SavingsGoal.user_id == user_id,
+    ).first()
+
+    if not goal:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    db.delete(goal)
+    db.commit()
+
+
+========== backend\app\api\savings_contributions.py ==========
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.models.user import User
+from app.models.savings_goal import SavingsGoal
+from app.models.savings_contribution import SavingsContribution
+
+from app.core.security import require_path_user
+
+from app.schemas.savings_contribution import (
+    SavingsContributionCreate,
+    SavingsContributionResponse,
+)
+
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/savings-goals/{goal_id}/contributions",
+    tags=["Savings Contributions"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def verify_goal(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    db: Session,
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    goal = db.query(SavingsGoal).filter(
+        SavingsGoal.id == goal_id,
+        SavingsGoal.user_id == user_id,
+    ).first()
+
+    if not goal:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    return goal
+
+
+@router.post(
+    "",
+    response_model=SavingsContributionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_contribution(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    contribution: SavingsContributionCreate,
+    db: Session = Depends(get_db),
+):
+    goal = verify_goal(user_id, goal_id, db)
+
+    if goal.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail="Contributions are only allowed for active goals",
+        )
+
+    new_contribution = SavingsContribution(
+        user_id=user_id,
+        goal_id=goal_id,
+        **contribution.model_dump(),
+    )
+
+    db.add(new_contribution)
+    db.commit()
+    db.refresh(new_contribution)
+
+    return new_contribution
+
+
+@router.get("", response_model=list[SavingsContributionResponse])
+def list_contributions(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_goal(user_id, goal_id, db)
+
+    return db.query(SavingsContribution).filter(
+        SavingsContribution.user_id == user_id,
+        SavingsContribution.goal_id == goal_id,
+    ).order_by(
+        SavingsContribution.contribution_date.desc()
+    ).all()
+
+
+@router.delete(
+    "/{contribution_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_contribution(
+    user_id: uuid.UUID,
+    goal_id: uuid.UUID,
+    contribution_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_goal(user_id, goal_id, db)
+
+    contribution = db.query(SavingsContribution).filter(
+        SavingsContribution.id == contribution_id,
+        SavingsContribution.user_id == user_id,
+        SavingsContribution.goal_id == goal_id,
+    ).first()
+
+    if not contribution:
+        raise HTTPException(
+            status_code=404,
+            detail="Contribution not found",
+        )
+
+    db.delete(contribution)
+    db.commit()
+
+
+========== backend\app\api\commitments.py ==========
+
+import uuid
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.core.security import require_path_user
+
+from app.db.database import get_db
+from app.models.user import User
+from app.models.commitment import Commitment
+from app.schemas.commitment import (
+    CommitmentCreate,
+    CommitmentUpdate,
+    CommitmentResponse,
+)
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/commitments",
+    tags=["Commitments & Subscriptions"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def verify_user(db: Session, user_id: uuid.UUID):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+def get_commitment(
+    db: Session,
+    user_id: uuid.UUID,
+    commitment_id: uuid.UUID,
+):
+    commitment = db.query(Commitment).filter(
+        Commitment.id == commitment_id,
+        Commitment.user_id == user_id,
+    ).first()
+
+    if not commitment:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+
+    return commitment
+
+
+# Upcoming commitments - define before /{commitment_id}
+@router.get("/upcoming", response_model=list[CommitmentResponse])
+def get_upcoming_commitments(
+    user_id: uuid.UUID,
+    days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    today = date.today()
+    deadline = date.fromordinal(today.toordinal() + days)
+
+    return (
+        db.query(Commitment)
+        .filter(
+            Commitment.user_id == user_id,
+            Commitment.status == "active",
+            Commitment.next_due_date.isnot(None),
+            Commitment.next_due_date >= today,
+            Commitment.next_due_date <= deadline,
+        )
+        .order_by(Commitment.next_due_date.asc())
+        .all()
+    )
+
+
+# Create commitment
+@router.post(
+    "",
+    response_model=CommitmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_commitment(
+    user_id: uuid.UUID,
+    payload: CommitmentCreate,
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    commitment = Commitment(
+        user_id=user_id,
+        **payload.model_dump(),
+    )
+
+    db.add(commitment)
+    db.commit()
+    db.refresh(commitment)
+
+    return commitment
+
+
+# List commitments
+@router.get("", response_model=list[CommitmentResponse])
+def list_commitments(
+    user_id: uuid.UUID,
+    commitment_type: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    query = db.query(Commitment).filter(
+        Commitment.user_id == user_id
+    )
+
+    if commitment_type:
+        query = query.filter(
+            Commitment.commitment_type == commitment_type
+        )
+
+    if status_filter:
+        query = query.filter(
+            Commitment.status == status_filter
+        )
+
+    return query.order_by(Commitment.created_at.desc()).all()
+
+
+# Get individual commitment
+@router.get("/{commitment_id}", response_model=CommitmentResponse)
+def get_single_commitment(
+    user_id: uuid.UUID,
+    commitment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    return get_commitment(db, user_id, commitment_id)
+
+
+# Update commitment
+@router.patch("/{commitment_id}", response_model=CommitmentResponse)
+def update_commitment(
+    user_id: uuid.UUID,
+    commitment_id: uuid.UUID,
+    payload: CommitmentUpdate,
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    commitment = get_commitment(db, user_id, commitment_id)
+
+    updates = payload.model_dump(exclude_unset=True)
+
+    for field, value in updates.items():
+        setattr(commitment, field, value)
+
+    db.commit()
+    db.refresh(commitment)
+
+    return commitment
+
+
+# Delete commitment
+@router.delete("/{commitment_id}")
+def delete_commitment(
+    user_id: uuid.UUID,
+    commitment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    verify_user(db, user_id)
+
+    commitment = get_commitment(db, user_id, commitment_id)
+
+    db.delete(commitment)
+    db.commit()
+
+    return {"message": "Commitment deleted successfully"}
+
+
+========== backend\app\api\dashboard.py ==========
+
+import uuid
+from datetime import datetime, date, time, timedelta
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.core.security import require_path_user
+
+from app.db.database import get_db
+from app.models.user import User
+from app.models.financial_account import FinancialAccount
+from app.models.transaction import Transaction
+from app.models.budget import Budget
+from app.models.savings_goal import SavingsGoal
+from app.models.savings_contribution import SavingsContribution
+from app.models.commitment import Commitment
+from app.schemas.dashboard import DashboardResponse
+
+router = APIRouter(
+    prefix="/api/v1/users/{user_id}/dashboard",
+    tags=["Dashboard"],
+    dependencies=[Depends(require_path_user)],
+)
+
+
+def money(value):
+    return Decimal(str(value or 0))
+
+
+@router.get("", response_model=DashboardResponse)
+def get_dashboard(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Use the user's configured timezone for dashboard date boundaries.
+    try:
+        user_timezone = ZoneInfo(user.timezone)
+    except Exception:
+        user_timezone = ZoneInfo("UTC")
+
+    today = datetime.now(user_timezone).date()
+    tomorrow = today + timedelta(days=1)
+    next_30_days = today + timedelta(days=30)
+
+    month_start = date(today.year, today.month, 1)
+
+    if today.month == 12:
+        next_month_start = date(today.year + 1, 1, 1)
+    else:
+        next_month_start = date(today.year, today.month + 1, 1)
+
+    month_start_dt = datetime.combine(
+        month_start, time.min, tzinfo=user_timezone
+    )
+    next_month_dt = datetime.combine(
+        next_month_start, time.min, tzinfo=user_timezone
+    )
+    tomorrow_dt = datetime.combine(
+        tomorrow, time.min, tzinfo=user_timezone
+    )
+
+    # 1. Financial accounts
+    accounts = (
+        db.query(FinancialAccount)
+        .filter(FinancialAccount.user_id == user_id)
+        .order_by(FinancialAccount.created_at.desc())
+        .all()
+    )
+
+    total_account_balance = sum(
+        (money(account.balance) for account in accounts),
+        Decimal("0"),
+    )
+
+    # 2. Current month's income and expenses
+    monthly_income = money(
+        db.query(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.transaction_type == "income",
+            Transaction.transaction_date >= month_start_dt,
+            Transaction.transaction_date < next_month_dt,
+        )
+        .scalar()
+    )
+
+    monthly_expenses = money(
+        db.query(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.transaction_type == "expense",
+            Transaction.transaction_date >= month_start_dt,
+            Transaction.transaction_date < next_month_dt,
+        )
+        .scalar()
+    )
+
+    # 3. Recent transactions
+    recent_transactions = (
+        db.query(Transaction)
+        .filter(Transaction.user_id == user_id)
+        .order_by(Transaction.transaction_date.desc())
+        .limit(5)
+        .all()
+    )
+
+    # 4. Active budgets and their current spending
+    active_budgets = (
+        db.query(Budget)
+        .filter(
+            Budget.user_id == user_id,
+            Budget.start_date <= today,
+            (Budget.end_date.is_(None) | (Budget.end_date >= today)),
+        )
+        .all()
+    )
+
+    budget_overviews = []
+
+    for budget in active_budgets:
+        spent = money(
+            db.query(func.coalesce(func.sum(Transaction.amount), 0))
+            .filter(
+                Transaction.user_id == user_id,
+                Transaction.transaction_type == "expense",
+                Transaction.category == budget.category,
+                Transaction.transaction_date >= datetime.combine(
+                    budget.start_date, time.min, tzinfo=user_timezone
+                ),
+                Transaction.transaction_date < tomorrow_dt,
+            )
+            .scalar()
+        )
+
+        limit_amount = money(budget.limit_amount)
+        remaining = max(limit_amount - spent, Decimal("0"))
+
+        percentage = (
+            (spent / limit_amount) * 100
+            if limit_amount > 0
+            else Decimal("0")
+        )
+
+        budget_overviews.append({
+            "id": budget.id,
+            "name": budget.name,
+            "category": budget.category,
+            "limit_amount": limit_amount,
+            "spent": spent,
+            "remaining": remaining,
+            "utilization_percentage": percentage.quantize(
+                Decimal("0.01")
+            ),
+        })
+
+    # 5. Savings goals and contributions
+    active_goals = (
+        db.query(SavingsGoal)
+        .filter(
+            SavingsGoal.user_id == user_id,
+            SavingsGoal.status == "active",
+        )
+        .all()
+    )
+
+    savings_goal_overviews = []
+    total_savings_target = Decimal("0")
+    total_saved = Decimal("0")
+
+    for goal in active_goals:
+        saved = money(
+            db.query(func.coalesce(func.sum(SavingsContribution.amount), 0))
+            .filter(
+                SavingsContribution.goal_id == goal.id,
+                SavingsContribution.user_id == user_id,
+            )
+            .scalar()
+        )
+
+        target = money(goal.target_amount)
+        remaining = max(target - saved, Decimal("0"))
+
+        percentage = (
+            min((saved / target) * 100, Decimal("100"))
+            if target > 0
+            else Decimal("0")
+        )
+
+        total_savings_target += target
+        total_saved += saved
+
+        savings_goal_overviews.append({
+            "id": goal.id,
+            "name": goal.name,
+            "target_amount": target,
+            "total_saved": saved,
+            "remaining": remaining,
+            "progress_percentage": percentage.quantize(
+                Decimal("0.01")
+            ),
+            "target_date": goal.target_date,
+            "status": goal.status,
+        })
+
+    # 6. Upcoming commitments in the next 30 days
+    upcoming_commitments = (
+        db.query(Commitment)
+        .filter(
+            Commitment.user_id == user_id,
+            Commitment.status == "active",
+            Commitment.next_due_date.isnot(None),
+            Commitment.next_due_date >= today,
+            Commitment.next_due_date <= next_30_days,
+        )
+        .order_by(Commitment.next_due_date.asc())
+        .all()
+    )
+
+    return {
+        "total_account_balance": total_account_balance,
+        "monthly_income": monthly_income,
+        "monthly_expenses": monthly_expenses,
+        "monthly_net": monthly_income - monthly_expenses,
+        "total_savings_target": total_savings_target,
+        "total_saved": total_saved,
+        "upcoming_commitments_count": len(upcoming_commitments),
+        "accounts": accounts,
+        "recent_transactions": recent_transactions,
+        "budgets": budget_overviews,
+        "savings_goals": savings_goal_overviews,
+        "upcoming_commitments": upcoming_commitments,
+    }
+
+
+========== backend\app\schemas\transaction.py ==========
+
+from datetime import datetime
+from decimal import Decimal
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TransactionCreate(BaseModel):
+    account_id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=150)
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    transaction_type: str = Field(pattern=r"^(income|expense)$")
+    category: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
+    transaction_date: datetime
+
+
+class TransactionUpdate(BaseModel):
+    account_id: uuid.UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    transaction_type: str | None = Field(default=None, pattern=r"^(income|expense)$")
+    category: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
+    transaction_date: datetime | None = None
+
+
+class TransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    account_id: uuid.UUID | None
+    title: str
+    amount: Decimal
+    transaction_type: str
+    category: str | None
+    description: str | None
+    transaction_date: datetime
+    created_at: datetime
+
+
+========== backend\app\models\transaction.py ==========
+
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import (
+    String,
+    Uuid,
+    DateTime,
+    Numeric,
+    ForeignKey,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("financial_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(150),
+        nullable=False,
+    )
+
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    transaction_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    category: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    transaction_date: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

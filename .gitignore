@@ -2,12 +2,18 @@
 
 # dependencies
 node_modules/
+.venv
+.git
+.expo
+
 
 # Expo
 .expo/
 dist/
 web-build/
 expo-env.d.ts
+
+.*
 
 # Native
 .kotlin/

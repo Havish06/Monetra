@@ -1,0 +1,772 @@
+
+
+========== C:\Projects\monetra\backend\app\models\budget.py ==========
+
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import (
+    String,
+    Uuid,
+    DateTime,
+    Numeric,
+    ForeignKey,
+    Date,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class Budget(Base):
+    __tablename__ = "budgets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    category: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    limit_amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    period: Mapped[str] = mapped_column(
+        String(20),
+        default="monthly",
+        nullable=False,
+    )
+
+    start_date: Mapped[Date] = mapped_column(
+        Date,
+        nullable=False,
+    )
+
+    end_date: Mapped[Date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\commitment.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    String, Uuid, DateTime, Numeric, ForeignKey,
+    Date, Boolean, func
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class Commitment(Base):
+    __tablename__ = "commitments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(150), nullable=False
+    )
+
+    commitment_type: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )
+
+    amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 2), nullable=True
+    )
+
+    frequency: Mapped[str] = mapped_column(
+        String(20), default="monthly", nullable=False
+    )
+
+    next_due_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+
+    end_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+
+    auto_renewal: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\financial_account.py ==========
+
+import uuid
+
+from sqlalchemy import String, Uuid, DateTime, Numeric, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+from datetime import datetime
+from decimal import Decimal
+
+class FinancialAccount(Base):
+    __tablename__ = "financial_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    account_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    institution: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    balance: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        default=0,
+        nullable=False,
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(3),
+        default="INR",
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\savings_contribution.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import String, Uuid, DateTime, Numeric, ForeignKey, Date, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class SavingsContribution(Base):
+    __tablename__ = "savings_contributions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+
+    goal_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("savings_goals.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False
+    )
+
+    contribution_date: Mapped[date] = mapped_column(
+        Date, nullable=False
+    )
+
+    note: Mapped[str | None] = mapped_column(
+        String(250), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\savings_goal.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import String, Uuid, DateTime, Numeric, ForeignKey, Date, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class SavingsGoal(Base):
+    __tablename__ = "savings_goals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    target_amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False
+    )
+
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    status: Mapped[str] = mapped_column(
+        String(20), default="active", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\transaction.py ==========
+
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import (
+    String,
+    Uuid,
+    DateTime,
+    Numeric,
+    ForeignKey,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("financial_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(150),
+        nullable=False,
+    )
+
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    transaction_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    category: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    transaction_date: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\user.py ==========
+
+import uuid
+
+from sqlalchemy import String, Uuid, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    auth_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    full_name: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(3),
+        default="INR",
+        nullable=False,
+    )
+
+    timezone: Mapped[str] = mapped_column(
+        String(50),
+        default="Asia/Kolkata",
+        nullable=False,
+    )
+
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+========== C:\Projects\monetra\backend\app\models\__init__.py ==========
+
+
+
+========== C:\Projects\monetra\backend\app\schemas\budget.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class BudgetCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    category: str = Field(min_length=1, max_length=50)
+    limit_amount: Decimal = Field(
+        gt=0, max_digits=14, decimal_places=2
+    )
+    period: str = Field(
+        default="monthly",
+        pattern=r"^(weekly|monthly|yearly|custom)$",
+    )
+    start_date: date
+    end_date: date | None = None
+
+
+class BudgetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    category: str | None = Field(default=None, min_length=1, max_length=50)
+    limit_amount: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
+    period: str | None = Field(
+        default=None,
+        pattern=r"^(weekly|monthly|yearly|custom)$",
+    )
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class BudgetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    category: str
+    limit_amount: Decimal
+    period: str
+    start_date: date
+    end_date: date | None
+    created_at: datetime
+
+
+class BudgetSummary(BaseModel):
+    budget: BudgetResponse
+    spent: Decimal
+    remaining: Decimal
+    utilization_percentage: Decimal
+    is_exceeded: bool
+
+
+========== C:\Projects\monetra\backend\app\schemas\commitment.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class CommitmentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=150)
+    commitment_type: str = Field(min_length=1, max_length=30)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    frequency: str = Field(min_length=1, max_length=20)
+    next_due_date: date | None = None
+    end_date: date | None = None
+    auto_renewal: bool = False
+
+
+class CommitmentUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    commitment_type: str | None = Field(default=None, min_length=1, max_length=30)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    frequency: str | None = Field(default=None, min_length=1, max_length=20)
+    next_due_date: date | None = None
+    end_date: date | None = None
+    auto_renewal: bool | None = None
+    status: str | None = Field(
+        default=None,
+        pattern=r"^(active|paused|cancelled|completed|expired)$"
+    )
+
+
+class CommitmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    title: str
+    commitment_type: str
+    amount: Decimal | None
+    frequency: str
+    next_due_date: date | None
+    end_date: date | None
+    auto_renewal: bool
+    status: str
+    created_at: datetime
+
+
+========== C:\Projects\monetra\backend\app\schemas\dashboard.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict
+
+
+class AccountOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    account_type: str
+    balance: Decimal
+    currency: str
+
+
+class TransactionOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    amount: Decimal
+    transaction_type: str
+    category: str | None
+    transaction_date: datetime
+
+
+class BudgetOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    category: str
+    limit_amount: Decimal
+    spent: Decimal
+    remaining: Decimal
+    utilization_percentage: Decimal
+
+
+class SavingsGoalOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    target_amount: Decimal
+    total_saved: Decimal
+    remaining: Decimal
+    progress_percentage: Decimal
+    target_date: date | None
+    status: str
+
+
+class CommitmentOverview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    title: str
+    commitment_type: str
+    amount: Decimal | None
+    frequency: str
+    next_due_date: date | None
+    auto_renewal: bool
+
+
+class DashboardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    total_account_balance: Decimal
+    monthly_income: Decimal
+    monthly_expenses: Decimal
+    monthly_net: Decimal
+    total_savings_target: Decimal
+    total_saved: Decimal
+    upcoming_commitments_count: int
+
+    accounts: list[AccountOverview]
+    recent_transactions: list[TransactionOverview]
+    budgets: list[BudgetOverview]
+    savings_goals: list[SavingsGoalOverview]
+    upcoming_commitments: list[CommitmentOverview]
+
+
+========== C:\Projects\monetra\backend\app\schemas\financial_account.py ==========
+
+from datetime import datetime
+from decimal import Decimal
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class FinancialAccountCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    account_type: str = Field(min_length=1, max_length=30)
+    institution: str | None = Field(default=None, max_length=100)
+    balance: Decimal = Field(default=Decimal("0.00"), max_digits=14, decimal_places=2)
+    currency: str = Field(default="INR", pattern=r"^[A-Z]{3}$")
+
+
+class FinancialAccountUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    account_type: str | None = Field(default=None, min_length=1, max_length=30)
+    institution: str | None = Field(default=None, max_length=100)
+    balance: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+
+
+class FinancialAccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    account_type: str
+    institution: str | None
+    balance: Decimal
+    currency: str
+    created_at: datetime
+
+
+========== C:\Projects\monetra\backend\app\schemas\savings_contribution.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class SavingsContributionCreate(BaseModel):
+    amount: Decimal = Field(
+        gt=0, max_digits=14, decimal_places=2
+    )
+    contribution_date: date
+    note: str | None = Field(default=None, max_length=250)
+
+
+class SavingsContributionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    goal_id: uuid.UUID
+    user_id: uuid.UUID
+    amount: Decimal
+    contribution_date: date
+    note: str | None
+    created_at: datetime
+
+
+========== C:\Projects\monetra\backend\app\schemas\savings_goal.py ==========
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class SavingsGoalCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    target_amount: Decimal = Field(
+        gt=0, max_digits=14, decimal_places=2
+    )
+    target_date: date | None = None
+
+
+class SavingsGoalUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    target_amount: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=2
+    )
+    target_date: date | None = None
+    status: str | None = Field(
+        default=None,
+        pattern=r"^(active|completed|paused|cancelled)$",
+    )
+
+
+class SavingsGoalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    target_amount: Decimal
+    target_date: date | None
+    status: str
+    created_at: datetime
+
+
+class SavingsGoalSummary(BaseModel):
+    goal: SavingsGoalResponse
+    total_saved: Decimal
+    remaining: Decimal
+    progress_percentage: Decimal
+    is_completed: bool
+
+
+========== C:\Projects\monetra\backend\app\schemas\transaction.py ==========
+
+from datetime import datetime
+from decimal import Decimal
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TransactionCreate(BaseModel):
+    account_id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=150)
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    transaction_type: str = Field(pattern=r"^(income|expense)$")
+    category: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
+    transaction_date: datetime
+
+
+class TransactionUpdate(BaseModel):
+    account_id: uuid.UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    transaction_type: str | None = Field(default=None, pattern=r"^(income|expense)$")
+    category: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
+    transaction_date: datetime | None = None
+
+
+class TransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    account_id: uuid.UUID | None
+    title: str
+    amount: Decimal
+    transaction_type: str
+    category: str | None
+    description: str | None
+    transaction_date: datetime
+    created_at: datetime
