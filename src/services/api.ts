@@ -137,6 +137,14 @@ export type PlannedExpense = {
   frequency: "once" | "monthly" | "yearly";
 };
 
+export type LinkedPayment = {
+  id: string;
+  title: string;
+  amount: number | string | null;
+  due_date: string;
+  status: "pending" | "overdue";
+};
+
 export type MonthlyPlan = {
   id: string | null;
   month_start: string;
@@ -145,6 +153,8 @@ export type MonthlyPlan = {
   buffer_amount: number | string;
   planned_expenses: PlannedExpense[];
   planned_expenses_total: number | string;
+  linked_payments: LinkedPayment[];
+  linked_payments_total: number | string;
   safe_to_spend: number | string;
   over_allocated_by: number | string;
   updated_at: string | null;
