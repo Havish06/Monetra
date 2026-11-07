@@ -11,7 +11,7 @@ import { theme } from "../constants/theme";
 import { useAuth } from "../context/AuthContext";
 import {
   getSalaryProfile, saveSalaryProfile, getMonthlyPlan, saveMonthlyPlan,
-  type PlannedExpense,
+  type PlannedExpense, type LinkedPayment,
 } from "../services/api";
 
 const currentMonth = () => {
@@ -39,6 +39,7 @@ export default function MonthlyPlannerScreen() {
   const [savings, setSavings] = useState("0");
   const [buffer, setBuffer] = useState("0");
   const [expenses, setExpenses] = useState<PlannedExpense[]>([]);
+  const [linkedPayments, setLinkedPayments] = useState<LinkedPayment[]>([]);
   const [expenseTitle, setExpenseTitle] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseDate, setExpenseDate] = useState(currentMonth().slice(0, 7) + "-10");
@@ -60,6 +61,7 @@ export default function MonthlyPlannerScreen() {
       setSavings(String(plan.savings_amount ?? 0));
       setBuffer(String(plan.buffer_amount ?? 0));
       setExpenses(plan.planned_expenses ?? []);
+      setLinkedPayments(plan.linked_payments ?? []);
     } catch (error) {
       Alert.alert("Couldn't load planner", error instanceof Error ? error.message : "Please try again.");
     } finally {
@@ -74,8 +76,9 @@ export default function MonthlyPlannerScreen() {
     const saved = Number(savings) || 0;
     const reserve = Number(buffer) || 0;
     const planned = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
-    return { income, saved, reserve, planned, remaining: income - saved - reserve - planned };
-  }, [salary, savings, buffer, expenses]);
+    const bills = linkedPayments.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    return { income, saved, reserve, planned, bills, remaining: income - saved - reserve - planned - bills };
+  }, [salary, savings, buffer, expenses, linkedPayments]);
 
   function addExpense() {
     const value = Number(expenseAmount);
@@ -205,6 +208,23 @@ export default function MonthlyPlannerScreen() {
             </View>
           ))}
           {expenses.length === 0 && <Text style={styles.empty}>Nothing planned yet. Add your first expense below.</Text>}
+          {linkedPayments.length > 0 && (
+            <View style={styles.linkedBills}>
+              <Text style={styles.linkedBillsTitle}>Existing bills & commitments</Text>
+              {linkedPayments.map(payment => (
+                <View key={payment.id} style={styles.expenseRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.expenseTitle}>{payment.title}</Text>
+                    <Text style={styles.helper}>{payment.due_date} · {payment.status}</Text>
+                  </View>
+                  <Text style={styles.expenseAmount}>
+                    {payment.amount == null ? "Amount unknown" : currency(Number(payment.amount))}
+                  </Text>
+                </View>
+              ))}
+              <Text style={styles.helper}>These are pulled from Bills and are already included in your safe-to-spend calculation.</Text>
+            </View>
+          )}
           <Field label="Expense title" value={expenseTitle} onChangeText={setExpenseTitle} placeholder="Rent, dinner, internet..." />
           <Field label="Estimated amount (₹)" value={expenseAmount} onChangeText={setExpenseAmount} keyboard="numeric" placeholder="1200" />
           <Field label="Due date (YYYY-MM-DD)" value={expenseDate} onChangeText={setExpenseDate} placeholder="2026-11-25" />
@@ -226,6 +246,7 @@ export default function MonthlyPlannerScreen() {
           <Summary label="Monthly income" value={currency(totals.income)} />
           <Summary label="Savings first" value={currency(totals.saved)} />
           <Summary label="Planned expenses" value={currency(totals.planned)} />
+          <Summary label="Existing unpaid bills" value={currency(totals.bills)} />
           <Summary label="Safety buffer" value={currency(totals.reserve)} />
           <View style={styles.divider} />
           <Summary label="Safe to spend" value={currency(Math.max(0, totals.remaining))} strong />
@@ -283,6 +304,8 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
   total: { color: theme.colors.primary, fontWeight: "700", fontSize: 13 },
   expenseRow: { flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 },
+  linkedBills: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 12, gap: 8, backgroundColor: theme.colors.background },
+  linkedBillsTitle: { color: theme.colors.text, fontSize: 12, fontWeight: "700" },
   expenseTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "600" },
   expenseAmount: { color: theme.colors.text, fontSize: 12, fontWeight: "600" },
   empty: { color: theme.colors.muted, fontSize: 12, paddingVertical: 8 },
