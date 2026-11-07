@@ -35,18 +35,21 @@ def due_payment_snapshot(db: Session, user_id: uuid.UUID, period: date):
         1 if period.month == 12 else period.month + 1,
         1,
     )
-    rows = (
+    query = (
         db.query(Payment, Commitment.title)
         .join(Commitment, Commitment.id == Payment.commitment_id)
         .filter(
             Payment.user_id == user_id,
-            Payment.due_date >= period,
             Payment.due_date < next_period,
             Payment.status.in_(["pending", "overdue"]),
         )
-        .order_by(Payment.due_date.asc())
-        .all()
     )
+    current_month = date.today().replace(day=1)
+    # For the current month, include unpaid overdue items from earlier months.
+    # Historical and future plans only include payments due within that month.
+    if period != current_month:
+        query = query.filter(Payment.due_date >= period)
+    rows = query.order_by(Payment.due_date.asc()).all()
     linked = [
         {"id": payment.id, "title": title, "amount": payment.amount,
          "due_date": payment.due_date, "status": payment.status}
