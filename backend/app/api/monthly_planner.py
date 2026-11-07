@@ -9,6 +9,8 @@ from app.core.security import require_path_user
 from app.db.database import get_db
 from app.models.user import User
 from app.models.monthly_planner import SalaryProfile, MonthlyPlan
+from app.models.payment import Payment
+from app.models.commitment import Commitment
 from app.schemas.monthly_planner import SalaryProfileUpsert, SalaryProfileResponse, MonthlyPlanUpsert, MonthlyPlanResponse
 
 router = APIRouter(
@@ -27,24 +29,63 @@ def month_start(value: date) -> date:
     return date(value.year, value.month, 1)
 
 
-def serialize_plan(plan: MonthlyPlan | None, period: date, salary: Decimal = Decimal("0")):
-    if plan is None:
-        return {
-            "id": None, "month_start": period, "salary_amount": salary,
-            "savings_amount": Decimal("0"), "buffer_amount": Decimal("0"),
-            "planned_expenses": [], "planned_expenses_total": Decimal("0"),
-            "safe_to_spend": salary, "over_allocated_by": Decimal("0"),
-            "updated_at": None,
-        }
-    expenses = plan.planned_expenses or []
-    total = sum((Decimal(str(item["amount"])) for item in expenses), Decimal("0"))
-    remaining = Decimal(str(plan.salary_amount)) - Decimal(str(plan.savings_amount)) - Decimal(str(plan.buffer_amount)) - total
+def due_payment_snapshot(db: Session, user_id: uuid.UUID, period: date):
+    next_period = date(
+        period.year + (1 if period.month == 12 else 0),
+        1 if period.month == 12 else period.month + 1,
+        1,
+    )
+    rows = (
+        db.query(Payment, Commitment.title)
+        .join(Commitment, Commitment.id == Payment.commitment_id)
+        .filter(
+            Payment.user_id == user_id,
+            Payment.due_date >= period,
+            Payment.due_date < next_period,
+            Payment.status.in_(["pending", "overdue"]),
+        )
+        .order_by(Payment.due_date.asc())
+        .all()
+    )
+    linked = [
+        {"id": payment.id, "title": title, "amount": payment.amount,
+         "due_date": payment.due_date, "status": payment.status}
+        for payment, title in rows
+    ]
+    total = sum(
+        (Decimal(str(item["amount"])) for item in linked if item["amount"] is not None),
+        Decimal("0"),
+    )
+    return linked, total
+
+
+def serialize_plan(
+    plan: MonthlyPlan | None,
+    period: date,
+    salary: Decimal = Decimal("0"),
+    linked_payments: list | None = None,
+    linked_payments_total: Decimal = Decimal("0"),
+    expenses_override: list | None = None,
+):
+    expenses = (plan.planned_expenses or []) if plan is not None else (expenses_override or [])
+    plan_salary = Decimal(str(plan.salary_amount)) if plan is not None else Decimal(str(salary))
+    savings = Decimal(str(plan.savings_amount)) if plan is not None else Decimal("0")
+    buffer = Decimal(str(plan.buffer_amount)) if plan is not None else Decimal("0")
+    expense_total = sum((Decimal(str(item["amount"])) for item in expenses), Decimal("0"))
+    remaining = plan_salary - savings - buffer - expense_total - linked_payments_total
     return {
-        "id": plan.id, "month_start": plan.month_start,
-        "salary_amount": plan.salary_amount, "savings_amount": plan.savings_amount,
-        "buffer_amount": plan.buffer_amount, "planned_expenses": expenses,
-        "planned_expenses_total": total, "safe_to_spend": max(remaining, Decimal("0")),
-        "over_allocated_by": max(-remaining, Decimal("0")), "updated_at": plan.updated_at,
+        "id": plan.id if plan is not None else None,
+        "month_start": period,
+        "salary_amount": plan_salary,
+        "savings_amount": savings,
+        "buffer_amount": buffer,
+        "planned_expenses": expenses,
+        "planned_expenses_total": expense_total,
+        "linked_payments": linked_payments or [],
+        "linked_payments_total": linked_payments_total,
+        "safe_to_spend": max(remaining, Decimal("0")),
+        "over_allocated_by": max(-remaining, Decimal("0")),
+        "updated_at": plan.updated_at if plan is not None else None,
     }
 
 
@@ -77,13 +118,17 @@ def get_plan(
 ):
     verify_user(db, user_id)
     period = month_start(month)
-    plan = db.query(MonthlyPlan).filter(MonthlyPlan.user_id == user_id, MonthlyPlan.month_start == period).first()
+    plan = db.query(MonthlyPlan).filter(
+        MonthlyPlan.user_id == user_id,
+        MonthlyPlan.month_start == period,
+    ).first()
     profile = db.query(SalaryProfile).filter(SalaryProfile.user_id == user_id).first()
     salary = profile.monthly_salary if profile else Decimal("0")
-    if plan is not None:
-        return serialize_plan(plan, period, salary)
+    linked_payments, payments_total = due_payment_snapshot(db, user_id, period)
 
-    # Carry recurring expenses forward into a month that has no saved plan yet.
+    if plan is not None:
+        return serialize_plan(plan, period, salary, linked_payments, payments_total)
+
     from calendar import monthrange
     prior_plans = (
         db.query(MonthlyPlan)
@@ -101,24 +146,18 @@ def get_plan(
             if frequency not in ("monthly", "yearly"):
                 continue
             due = date.fromisoformat(item["due_date"])
-            if frequency == "yearly" and not (
-                period.month == due.month and period.year > due.year
-            ):
+            if frequency == "yearly" and not (period.month == due.month and period.year > due.year):
                 continue
             day = min(due.day, monthrange(period.year, period.month)[1])
-            next_due = date(period.year, period.month, day)
-            carried[expense_id] = {**item, "due_date": next_due.isoformat()}
+            carried[expense_id] = {
+                **item,
+                "due_date": date(period.year, period.month, day).isoformat(),
+            }
 
-    expenses = list(carried.values())
-    total = sum((Decimal(str(item["amount"])) for item in expenses), Decimal("0"))
-    remaining = Decimal(str(salary)) - total
-    return {
-        "id": None, "month_start": period, "salary_amount": salary,
-        "savings_amount": Decimal("0"), "buffer_amount": Decimal("0"),
-        "planned_expenses": expenses, "planned_expenses_total": total,
-        "safe_to_spend": max(remaining, Decimal("0")),
-        "over_allocated_by": max(-remaining, Decimal("0")), "updated_at": None,
-    }
+    return serialize_plan(
+        None, period, salary, linked_payments, payments_total,
+        expenses_override=list(carried.values()),
+    )
 
 
 @router.put("/plan", response_model=MonthlyPlanResponse)
@@ -136,9 +175,13 @@ def put_plan(
         raise HTTPException(status_code=422, detail="Set your monthly salary before creating a plan.")
     expenses = [item.model_dump(mode="json") for item in payload.planned_expenses]
     total = sum((Decimal(str(item["amount"])) for item in expenses), Decimal("0"))
-    allocated = payload.savings_amount + payload.buffer_amount + total
+    linked_payments, payments_total = due_payment_snapshot(db, user_id, period)
+    allocated = payload.savings_amount + payload.buffer_amount + total + payments_total
     if allocated > salary:
-        raise HTTPException(status_code=422, detail="Savings, buffer and expenses exceed your planned salary.")
+        raise HTTPException(
+            status_code=422,
+            detail="Savings, buffer, planned expenses and unpaid bills exceed your planned salary.",
+        )
     plan = db.query(MonthlyPlan).filter(MonthlyPlan.user_id == user_id, MonthlyPlan.month_start == period).first()
     if plan is None:
         plan = MonthlyPlan(user_id=user_id, month_start=period, salary_amount=salary, savings_amount=payload.savings_amount, buffer_amount=payload.buffer_amount, planned_expenses=expenses)
@@ -150,4 +193,4 @@ def put_plan(
         plan.planned_expenses = expenses
     db.commit()
     db.refresh(plan)
-    return serialize_plan(plan, period)
+    return serialize_plan(plan, period, salary, linked_payments, payments_total)
