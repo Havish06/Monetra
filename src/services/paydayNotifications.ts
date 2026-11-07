@@ -3,7 +3,29 @@ import * as Notifications from "expo-notifications";
 
 const CHANNEL_ID = "payday-reminders";
 const REMINDER_TAG = "monetra-payday-reminder";
-const MONTHS_TO_SCHEDULE = 12;
+// Explicitly show local reminders even when Monetra is currently open.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+async function prepareNotificationChannel() {
+  if (Platform.OS !== "android") return;
+
+  // Android 13+ requires a notification channel before its permission prompt
+  // can be displayed.
+  await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    name: "Payday reminders",
+    description: "Monthly reminders to review your salary and savings plan.",
+    importance: Notifications.AndroidImportance.DEFAULT,
+    vibrationPattern: [0, 250, 200, 250],
+    lightColor: "#C5F277",
+  });
+}
 
 export async function syncPaydayReminders(
   userId: string,
@@ -13,6 +35,8 @@ export async function syncPaydayReminders(
   if (!userId || !Number.isInteger(paydayDay) || paydayDay < 1 || paydayDay > 31) {
     return false;
   }
+
+  await prepareNotificationChannel();
 
   let permission = await Notifications.getPermissionsAsync();
   if (!permission.granted && requestPermission) {
@@ -25,21 +49,12 @@ export async function syncPaydayReminders(
     notification.content.data?.tag === REMINDER_TAG &&
     notification.content.data?.userId === userId
   );
+
   await Promise.all(
     previous.map(notification =>
       Notifications.cancelScheduledNotificationAsync(notification.identifier)
     )
   );
-
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-      name: "Payday reminders",
-      description: "Monthly reminders to review your salary and savings plan.",
-      importance: Notifications.AndroidImportance.DEFAULT,
-      vibrationPattern: [0, 250, 200, 250],
-      lightColor: "#C5F277",
-    });
-  }
 
   const now = new Date();
   const schedules: Date[] = [];
