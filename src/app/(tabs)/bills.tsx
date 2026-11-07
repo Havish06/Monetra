@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,13 +20,17 @@ import { theme } from "../../constants/theme";
 import { useAuth } from "../../context/AuthContext";
 import {
   Commitment,
+  Payment,
   createCommitment,
   deleteCommitment,
   getCommitments,
+  getPayments,
+  markPaymentPaid,
   updateCommitment,
 } from "../../services/api";
 
 type Filter = "all" | "subscriptions" | "trials";
+type PaymentFilter = "all" | "pending" | "overdue" | "paid";
 
 type FormState = {
   title: string;
@@ -101,29 +104,47 @@ function dueLabel(item: Commitment) {
   return `Due in ${days} days`;
 }
 
+function paymentStatusLabel(status: Payment["status"]) {
+  if (status === "paid") return "Paid";
+  if (status === "overdue") return "Overdue";
+  return "Pending";
+}
+
 export default function BillsScreen() {
   const { profile } = useAuth();
   const userId = profile?.id;
   const currency = profile?.currency || "INR";
 
   const [items, setItems] = useState<Commitment[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [payingId, setPayingId] = useState<string | null>(null);
+
   const [filter, setFilter] = useState<Filter>("all");
+  const [paymentFilter, setPaymentFilter] =
+    useState<PaymentFilter>("all");
+  const [expandedCommitmentId, setExpandedCommitmentId] =
+    useState<string | null>(null);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<Commitment | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
 
-  const loadCommitments = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!userId) {
       setLoading(false);
       return;
     }
 
     try {
-      const result = await getCommitments(userId);
-      setItems(result);
+      const [commitmentResult, paymentResult] = await Promise.all([
+        getCommitments(userId),
+        getPayments(userId),
+      ]);
+
+      setItems(commitmentResult);
+      setPayments(paymentResult);
     } catch (error) {
       Alert.alert(
         "Couldn't load bills",
@@ -135,8 +156,8 @@ export default function BillsScreen() {
   }, [userId]);
 
   useEffect(() => {
-    loadCommitments();
-  }, [loadCommitments]);
+    loadData();
+  }, [loadData]);
 
   const activeItems = useMemo(
     () => items.filter((item) => item.status === "active"),
@@ -181,20 +202,61 @@ export default function BillsScreen() {
     [activeItems]
   );
 
+  const outstandingPayments = useMemo(
+    () =>
+      payments.filter(
+        (payment) =>
+          payment.status === "pending" || payment.status === "overdue"
+      ),
+    [payments]
+  );
+
+  const overduePayments = useMemo(
+    () => payments.filter((payment) => payment.status === "overdue"),
+    [payments]
+  );
+
+  const outstandingAmount = useMemo(
+    () =>
+      outstandingPayments.reduce(
+        (total, payment) => total + Number(payment.amount ?? 0),
+        0
+      ),
+    [outstandingPayments]
+  );
+
   const filteredItems = useMemo(() => {
     return items
-      .filter((item) => item.status !== "cancelled" && item.status !== "completed")
+      .filter(
+        (item) =>
+          item.status !== "cancelled" && item.status !== "completed"
+      )
       .filter((item) => {
         if (filter === "trials") return isTrial(item);
         if (filter === "subscriptions") return !isTrial(item);
         return true;
+      })
+      .filter((item) => {
+        if (paymentFilter === "all") return true;
+
+        return payments.some(
+          (payment) =>
+            payment.commitment_id === item.id &&
+            payment.status === paymentFilter
+        );
       })
       .sort((a, b) => {
         if (!a.next_due_date) return 1;
         if (!b.next_due_date) return -1;
         return a.next_due_date.localeCompare(b.next_due_date);
       });
-  }, [items, filter]);
+  }, [items, filter, paymentFilter, payments]);
+
+  function paymentsFor(item: Commitment) {
+    return payments
+      .filter((payment) => payment.commitment_id === item.id)
+      .sort((a, b) => b.due_date.localeCompare(a.due_date));
+  }
 
   function openCreate() {
     setEditing(null);
@@ -223,22 +285,39 @@ export default function BillsScreen() {
     setForm((previous) => ({ ...previous, [key]: value }));
   }
 
+  function isValidDate(value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+
+    return (
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    );
+  }
+
   async function saveCommitment() {
     if (!userId) return;
 
     if (!form.title.trim()) {
-      Alert.alert("Name required", "Enter a name for this bill or subscription.");
+      Alert.alert(
+        "Name required",
+        "Enter a name for this bill or subscription."
+      );
       return;
     }
 
     const amount = form.amount.trim() ? Number(form.amount) : null;
 
-    if (amount !== null && (!Number.isFinite(amount) || amount < 0)) {
-      Alert.alert("Invalid amount", "Enter a valid positive amount.");
+    if (
+      amount !== null &&
+      (!Number.isFinite(amount) || amount <= 0)
+    ) {
+      Alert.alert("Invalid amount", "Enter an amount greater than zero.");
       return;
     }
-
-    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
     if (
       (form.next_due_date && !isValidDate(form.next_due_date)) ||
@@ -273,7 +352,7 @@ export default function BillsScreen() {
       setModalVisible(false);
       setEditing(null);
       setForm(emptyForm);
-      await loadCommitments();
+      await loadData();
     } catch (error) {
       Alert.alert(
         "Couldn't save",
@@ -282,19 +361,6 @@ export default function BillsScreen() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function isValidDate(value: string) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-    const [year, month, day] = value.split("-").map(Number);
-    const date = new Date(year, month - 1, day);
-
-    return (
-      date.getFullYear() === year &&
-      date.getMonth() === month - 1 &&
-      date.getDate() === day
-    );
   }
 
   async function changeStatus(item: Commitment) {
@@ -307,7 +373,7 @@ export default function BillsScreen() {
       await updateCommitment(userId, item.id, {
         status: nextStatus,
       });
-      await loadCommitments();
+      await loadData();
     } catch (error) {
       Alert.alert(
         "Couldn't update",
@@ -319,7 +385,7 @@ export default function BillsScreen() {
   function confirmDelete(item: Commitment) {
     Alert.alert(
       "Delete commitment?",
-      `${item.title} will be removed from your watchtower.`,
+      `${item.title} and its payment history will be removed.`,
       [
         { text: "Keep it", style: "cancel" },
         {
@@ -330,7 +396,7 @@ export default function BillsScreen() {
 
             try {
               await deleteCommitment(userId, item.id);
-              await loadCommitments();
+              await loadData();
             } catch (error) {
               Alert.alert(
                 "Couldn't delete",
@@ -343,10 +409,129 @@ export default function BillsScreen() {
     );
   }
 
+  function confirmMarkPaid(payment: Payment, title: string) {
+    if (!userId) return;
+
+    Alert.alert(
+      "Mark payment as paid?",
+      `Record ${money(payment.amount, currency)} for ${title} as paid. This does not make an actual bank payment.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark as paid",
+          onPress: async () => {
+            setPayingId(payment.id);
+
+            try {
+              await markPaymentPaid(userId, payment.id);
+              await loadData();
+            } catch (error) {
+              Alert.alert(
+                "Couldn't update payment",
+                error instanceof Error ? error.message : "Please try again."
+              );
+            } finally {
+              setPayingId(null);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  function renderPaymentHistory(item: Commitment) {
+    const itemPayments = paymentsFor(item);
+
+    if (itemPayments.length === 0) {
+      return (
+        <View style={styles.paymentEmpty}>
+          <Text style={styles.paymentEmptyText}>
+            No payment records yet.
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.paymentHistory}>
+        {itemPayments.map((payment) => {
+          const isPaid = payment.status === "paid";
+          const isOverdue = payment.status === "overdue";
+          const isPaying = payingId === payment.id;
+
+          return (
+            <View key={payment.id} style={styles.paymentRow}>
+              <View style={styles.paymentInfo}>
+                <Text style={styles.paymentDate}>
+                  {formatDate(payment.due_date)}
+                </Text>
+                <Text style={styles.paymentAmount}>
+                  {money(payment.amount, currency)}
+                </Text>
+                {payment.paid_at && (
+                  <Text style={styles.paymentPaidDate}>
+                    Paid on {formatDate(payment.paid_at.slice(0, 10))}
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.paymentActions}>
+                <View
+                  style={[
+                    styles.paymentStatusBadge,
+                    isPaid && styles.paidBadge,
+                    isOverdue && styles.overdueBadge,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.paymentStatusText,
+                      isPaid && styles.paidText,
+                      isOverdue && styles.overdueText,
+                    ]}
+                  >
+                    {paymentStatusLabel(payment.status)}
+                  </Text>
+                </View>
+
+                {!isPaid && (
+                  <Pressable
+                    style={[
+                      styles.markPaidButton,
+                      isPaying && styles.disabledButton,
+                    ]}
+                    disabled={isPaying}
+                    onPress={() => confirmMarkPaid(payment, item.title)}
+                  >
+                    {isPaying ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={theme.colors.background}
+                      />
+                    ) : (
+                      <Text style={styles.markPaidText}>Mark paid</Text>
+                    )}
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
   function renderCommitment(item: Commitment) {
     const trial = isTrial(item);
     const paused = item.status === "paused";
     const days = daysUntil(item.next_due_date);
+    const itemPayments = paymentsFor(item);
+    const isExpanded = expandedCommitmentId === item.id;
+
+    const nextPayment = itemPayments.find(
+      (payment) =>
+        payment.status === "pending" || payment.status === "overdue"
+    );
 
     return (
       <Surface key={item.id} style={styles.commitmentCard}>
@@ -374,7 +559,9 @@ export default function BillsScreen() {
           </View>
 
           <Text style={styles.amount}>
-            {item.amount === null ? "Amount not set" : money(item.amount, currency)}
+            {item.amount === null
+              ? "Amount not set"
+              : money(item.amount, currency)}
           </Text>
         </View>
 
@@ -401,6 +588,67 @@ export default function BillsScreen() {
           </View>
         </View>
 
+        {nextPayment && (
+          <View style={styles.nextPaymentBox}>
+            <View style={styles.nextPaymentInfo}>
+              <Text style={styles.nextPaymentLabel}>
+                {nextPayment.status === "overdue"
+                  ? "OUTSTANDING · OVERDUE"
+                  : "NEXT PAYMENT"}
+              </Text>
+              <Text style={styles.nextPaymentAmount}>
+                {money(nextPayment.amount, currency)}
+              </Text>
+            </View>
+
+            <Pressable
+              style={[
+                styles.markPaidButton,
+                payingId === nextPayment.id && styles.disabledButton,
+              ]}
+              disabled={payingId === nextPayment.id}
+              onPress={() => confirmMarkPaid(nextPayment, item.title)}
+            >
+              {payingId === nextPayment.id ? (
+                <ActivityIndicator
+                  size="small"
+                  color={theme.colors.background}
+                />
+              ) : (
+                <Text style={styles.markPaidText}>Mark paid</Text>
+              )}
+            </Pressable>
+          </View>
+        )}
+
+        <Pressable
+          style={styles.historyToggle}
+          onPress={() =>
+            setExpandedCommitmentId(
+              isExpanded ? null : item.id
+            )
+          }
+        >
+          <View style={styles.historyToggleLeft}>
+            <Ionicons
+              name="receipt-outline"
+              size={15}
+              color={theme.colors.secondary}
+            />
+            <Text style={styles.historyToggleText}>
+              Payment history ({itemPayments.length})
+            </Text>
+          </View>
+
+          <Ionicons
+            name={isExpanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={theme.colors.secondary}
+          />
+        </Pressable>
+
+        {isExpanded && renderPaymentHistory(item)}
+
         {item.auto_renewal && !paused && (
           <View style={styles.renewalNotice}>
             <Ionicons
@@ -419,7 +667,11 @@ export default function BillsScreen() {
             style={styles.actionButton}
             onPress={() => openEdit(item)}
           >
-            <Ionicons name="create-outline" size={16} color={theme.colors.text} />
+            <Ionicons
+              name="create-outline"
+              size={16}
+              color={theme.colors.text}
+            />
             <Text style={styles.actionText}>Edit</Text>
           </Pressable>
 
@@ -441,7 +693,11 @@ export default function BillsScreen() {
             style={styles.actionButton}
             onPress={() => confirmDelete(item)}
           >
-            <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
+            <Ionicons
+              name="trash-outline"
+              size={16}
+              color={theme.colors.danger}
+            />
             <Text style={[styles.actionText, { color: theme.colors.danger }]}>
               Delete
             </Text>
@@ -463,7 +719,11 @@ export default function BillsScreen() {
         </View>
 
         <Pressable style={styles.addButton} onPress={openCreate}>
-          <Ionicons name="add" size={25} color={theme.colors.background} />
+          <Ionicons
+            name="add"
+            size={25}
+            color={theme.colors.background}
+          />
         </Pressable>
       </View>
 
@@ -473,13 +733,46 @@ export default function BillsScreen() {
           <Text style={styles.summaryValue}>
             {money(monthlyExposure, currency)}
           </Text>
-          <Text style={styles.summaryHint}>Estimated recurring cost</Text>
+          <Text style={styles.summaryHint}>
+            Estimated recurring cost
+          </Text>
         </Surface>
 
         <Surface style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>UPCOMING</Text>
-          <Text style={styles.summaryValue}>{upcomingItems.length}</Text>
-          <Text style={styles.summaryHint}>Due in the next 30 days</Text>
+          <Text style={styles.summaryValue}>
+            {upcomingItems.length}
+          </Text>
+          <Text style={styles.summaryHint}>
+            Due in the next 30 days
+          </Text>
+        </Surface>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <Surface style={styles.summaryCard}>
+          <Text style={styles.summaryLabel}>OUTSTANDING</Text>
+          <Text style={styles.summaryValue}>
+            {money(outstandingAmount, currency)}
+          </Text>
+          <Text style={styles.summaryHint}>
+            {outstandingPayments.length} unpaid payment(s)
+          </Text>
+        </Surface>
+
+        <Surface style={styles.summaryCard}>
+          <Text style={styles.summaryLabel}>OVERDUE</Text>
+          <Text
+            style={[
+              styles.summaryValue,
+              overduePayments.length > 0 && styles.overdueSummaryValue,
+            ]}
+          >
+            {overduePayments.length}
+          </Text>
+          <Text style={styles.summaryHint}>
+            Payment(s) past due date
+          </Text>
         </Surface>
       </View>
 
@@ -494,12 +787,14 @@ export default function BillsScreen() {
         <View style={styles.alertContent}>
           <Text style={styles.alertTitle}>Stay ahead of renewals</Text>
           <Text style={styles.alertDescription}>
-            Track free trials, recurring charges and auto-renewals in one place.
+            Track free trials, recurring charges and payment history in one place.
           </Text>
         </View>
       </Surface>
 
-      <SectionHeader title={`Your commitments · ${filteredItems.length} tracked`} />
+      <SectionHeader
+        title={`Your commitments · ${filteredItems.length} tracked`}
+      />
 
       <View style={styles.filters}>
         {(
@@ -529,10 +824,43 @@ export default function BillsScreen() {
         ))}
       </View>
 
+      <Text style={styles.filterSectionLabel}>PAYMENT STATUS</Text>
+
+      <View style={styles.filters}>
+        {(
+          [
+            ["all", "All"],
+            ["pending", "Pending"],
+            ["overdue", "Overdue"],
+            ["paid", "Paid"],
+          ] as [PaymentFilter, string][]
+        ).map(([value, label]) => (
+          <Pressable
+            key={value}
+            onPress={() => setPaymentFilter(value)}
+            style={[
+              styles.filterButton,
+              paymentFilter === value && styles.activeFilter,
+            ]}
+          >
+            <Text
+              style={[
+                styles.filterText,
+                paymentFilter === value && styles.activeFilterText,
+              ]}
+            >
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
       {loading ? (
         <View style={styles.loading}>
           <ActivityIndicator color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Loading commitments...</Text>
+          <Text style={styles.loadingText}>
+            Loading commitments and payments...
+          </Text>
         </View>
       ) : filteredItems.length === 0 ? (
         <Surface style={styles.emptyCard}>
@@ -541,13 +869,27 @@ export default function BillsScreen() {
             size={32}
             color={theme.colors.muted}
           />
-          <Text style={styles.emptyTitle}>Nothing tracked yet.</Text>
-          <Text style={styles.emptyText}>
-            Add a subscription, bill or free trial to start keeping track.
+          <Text style={styles.emptyTitle}>
+            {paymentFilter === "all"
+              ? "Nothing tracked yet."
+              : `No ${paymentFilter} payments.`}
           </Text>
-          <Pressable style={styles.emptyButton} onPress={openCreate}>
-            <Text style={styles.emptyButtonText}>Add your first commitment</Text>
-          </Pressable>
+          <Text style={styles.emptyText}>
+            {paymentFilter === "all"
+              ? "Add a subscription, bill or free trial to start keeping track."
+              : "Try another payment filter or add a new commitment."}
+          </Text>
+
+          {paymentFilter === "all" && (
+            <Pressable
+              style={styles.emptyButton}
+              onPress={openCreate}
+            >
+              <Text style={styles.emptyButtonText}>
+                Add your first commitment
+              </Text>
+            </Pressable>
+          )}
         </Surface>
       ) : (
         <View style={styles.list}>
@@ -562,7 +904,7 @@ export default function BillsScreen() {
           color={theme.colors.muted}
         />
         <Text style={styles.bottomNoteText}>
-          Monthly exposure is an estimate based on active recurring commitments.
+          Marking a payment as paid updates Monetra records only. It does not transfer money.
         </Text>
       </View>
 
@@ -588,7 +930,11 @@ export default function BillsScreen() {
                 style={styles.closeButton}
                 onPress={() => setModalVisible(false)}
               >
-                <Ionicons name="close" size={22} color={theme.colors.text} />
+                <Ionicons
+                  name="close"
+                  size={22}
+                  color={theme.colors.text}
+                />
               </Pressable>
             </View>
 
@@ -619,7 +965,8 @@ export default function BillsScreen() {
                     <Text
                       style={[
                         styles.choiceText,
-                        form.commitment_type === value && styles.choiceTextActive,
+                        form.commitment_type === value &&
+                          styles.choiceTextActive,
                       ]}
                     >
                       {value === "trial"
@@ -663,10 +1010,14 @@ export default function BillsScreen() {
                 ))}
               </View>
 
-              <Text style={styles.inputLabel}>NEXT PAYMENT / TRIAL END</Text>
+              <Text style={styles.inputLabel}>
+                NEXT PAYMENT / TRIAL END
+              </Text>
               <TextInput
                 value={form.next_due_date}
-                onChangeText={(value) => changeForm("next_due_date", value)}
+                onChangeText={(value) =>
+                  changeForm("next_due_date", value)
+                }
                 placeholder="YYYY-MM-DD"
                 placeholderTextColor={theme.colors.muted}
                 style={styles.input}
@@ -708,7 +1059,10 @@ export default function BillsScreen() {
               </View>
 
               <Pressable
-                style={[styles.saveButton, saving && styles.disabledButton]}
+                style={[
+                  styles.saveButton,
+                  saving && styles.disabledButton,
+                ]}
                 onPress={saveCommitment}
                 disabled={saving}
               >
@@ -764,7 +1118,7 @@ const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   summaryCard: {
     flex: 1,
@@ -782,6 +1136,9 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginTop: 10,
   },
+  overdueSummaryValue: {
+    color: theme.colors.danger,
+  },
   summaryHint: {
     color: theme.colors.secondary,
     fontSize: 10,
@@ -791,6 +1148,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 13,
+    marginTop: 2,
     marginBottom: 28,
     padding: 16,
   },
@@ -816,9 +1174,17 @@ const styles = StyleSheet.create({
   },
   filters: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginTop: 12,
     marginBottom: 15,
+  },
+  filterSectionLabel: {
+    color: theme.colors.muted,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 2,
   },
   filterButton: {
     paddingHorizontal: 14,
@@ -915,6 +1281,130 @@ const styles = StyleSheet.create({
   },
   dueWarning: { color: theme.colors.warning },
   pausedText: { color: theme.colors.secondary },
+
+  nextPaymentBox: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 13,
+    backgroundColor: theme.colors.surfaceElevated,
+  },
+  nextPaymentInfo: { flex: 1 },
+  nextPaymentLabel: {
+    color: theme.colors.muted,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  nextPaymentAmount: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  markPaidButton: {
+    minWidth: 85,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  markPaidText: {
+    color: theme.colors.background,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  historyToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 14,
+    paddingVertical: 9,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  historyToggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  historyToggleText: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  paymentHistory: {
+    gap: 0,
+    marginTop: 3,
+  },
+  paymentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  paymentInfo: { flex: 1 },
+  paymentDate: {
+    color: theme.colors.text,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  paymentAmount: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  paymentPaidDate: {
+    color: theme.colors.muted,
+    fontSize: 9,
+    marginTop: 3,
+  },
+  paymentActions: {
+    alignItems: "flex-end",
+    gap: 7,
+  },
+  paymentStatusBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surfaceElevated,
+  },
+  paidBadge: {
+    backgroundColor: "#C5F27720",
+  },
+  overdueBadge: {
+    backgroundColor: "#E5737320",
+  },
+  paymentStatusText: {
+    color: theme.colors.secondary,
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  paidText: {
+    color: theme.colors.primary,
+  },
+  overdueText: {
+    color: theme.colors.danger,
+  },
+  paymentEmpty: {
+    paddingVertical: 13,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  paymentEmptyText: {
+    color: theme.colors.muted,
+    fontSize: 11,
+  },
+
   renewalNotice: {
     flexDirection: "row",
     alignItems: "center",

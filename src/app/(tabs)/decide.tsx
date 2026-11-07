@@ -1,5 +1,7 @@
 
 import { useEffect, useRef, useState } from "react";
+import type { ComponentRef } from "react";
+
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -38,7 +40,7 @@ export default function DecideScreen() {
   const [previousResult, setPreviousResult] =
     useState<MonetraAIResponse | null>(null);
 
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
