@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
 import { Screen } from "../../components/ui/Screen";
 import { PlanCard } from "../../components/plans/PlanCard";
@@ -80,6 +81,7 @@ const emptyForm = (): FormState => ({
 
 export default function PlansScreen() {
   const { profile } = useAuth();
+  const router = useRouter();
   const userId = profile?.id;
 
   const [budgets, setBudgets] = useState<BudgetSummary[]>([]);
@@ -370,6 +372,17 @@ export default function PlansScreen() {
           <Text style={styles.overviewValue}>{money(totalSaved)}</Text>
         </View>
       </View>
+
+      <Pressable style={styles.monthlyPlannerCard} onPress={() => router.push("/planner")}>
+        <View style={styles.monthlyPlannerIcon}>
+          <Ionicons name="calendar-clear-outline" size={20} color={theme.colors.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.monthlyPlannerTitle}>Monthly money plan</Text>
+          <Text style={styles.monthlyPlannerSubtitle}>Set payday, save first and plan what remains.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={19} color={theme.colors.secondary} />
+      </Pressable>
 
       <SectionTitle
         title="Budgets"
@@ -747,6 +760,35 @@ function formatDate(value: string) {
 }
 
 const styles = StyleSheet.create({
+  monthlyPlannerCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 15,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.primaryMuted,
+    backgroundColor: theme.colors.surfaceElevated,
+  },
+  monthlyPlannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#303D25",
+  },
+  monthlyPlannerTitle: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  monthlyPlannerSubtitle: {
+    color: theme.colors.secondary,
+    fontSize: 11,
+    lineHeight: 16,
+  },
   loading: {
     minHeight: 400,
     alignItems: "center",
