@@ -1,0 +1,883 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Monetra AI Question Bank",
+  "description": "Curated natural-language examples for deterministic intent recognition and conversation handling. This is a phrase dataset, not a generative language model.",
+  "language_coverage": [
+    "English",
+    "Indian English",
+    "Hinglish",
+    "informal phrasing"
+  ],
+  "matching_guidance": {
+    "normalize": [
+      "lowercase",
+      "trim whitespace",
+      "normalize currency symbols and punctuation",
+      "support common amount shorthand such as 5k and 2.5k"
+    ],
+    "ranking": [
+      "exact phrase or high-confidence phrase match",
+      "intent keyword and entity match",
+      "conversation context for follow-ups"
+    ],
+    "safety": "Never infer missing financial facts, promise bank availability, request secrets, or execute money movement.",
+    "fallback": "If confidence is low or required context is missing, ask one specific clarification question."
+  },
+  "intent_groups": [
+    {
+      "id": "accounts.list",
+      "category": "bank_accounts",
+      "intent": "list_accounts",
+      "examples": [
+        "What bank accounts do I have?",
+        "Show all my accounts",
+        "Which accounts are linked to Monetra?",
+        "List my savings and current accounts",
+        "How many accounts are connected?",
+        "Can you show my bank accounts?",
+        "What accounts have I added?",
+        "Mere kaun kaun se bank accounts linked hain?",
+        "Mere saare accounts dikhao",
+        "Which banks are connected to my profile?"
+      ],
+      "required_context": [
+        "authenticated_user"
+      ],
+      "expected_action": "Return the user's linked accounts with institution, account type, masked identifier if available, and last sync status.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "account_name",
+        "institution"
+      ]
+    },
+    {
+      "id": "accounts.total_balance",
+      "category": "bank_accounts",
+      "intent": "total_account_balance",
+      "examples": [
+        "How much money do I have across all my accounts?",
+        "What's my total bank balance?",
+        "How much cash do I have in the bank?",
+        "Add up the balances in all my accounts",
+        "What's my combined balance?",
+        "How much money is available across my banks?",
+        "Total balance batao",
+        "Mere sabhi accounts mein kitne paise hain?",
+        "How much do I have altogether?",
+        "What's the total across my savings and current accounts?",
+        "Can you check my overall account balance?"
+      ],
+      "required_context": [
+        "linked_accounts",
+        "balance_freshness"
+      ],
+      "expected_action": "Sum eligible account balances and show per-account breakdown, currency, and data freshness. Do not call ledger balance 'available balance' unless supported.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "account_name",
+        "currency",
+        "as_of_date"
+      ]
+    },
+    {
+      "id": "accounts.balance",
+      "category": "bank_accounts",
+      "intent": "single_account_balance",
+      "examples": [
+        "What's my HDFC balance?",
+        "How much is in my savings account?",
+        "Check my SBI account balance",
+        "How much money is in account ending 4821?",
+        "Balance in my salary account?",
+        "Show the balance of my main account",
+        "Mere HDFC mein kitna balance hai?",
+        "What's left in my ICICI account?",
+        "Can you tell me my account balance?",
+        "How much do I have in my Axis account?"
+      ],
+      "required_context": [
+        "linked_accounts"
+      ],
+      "expected_action": "Identify the requested account; if multiple matches exist, ask which one. Display balance with currency and last-updated timestamp.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "account_name",
+        "institution",
+        "masked_account_number"
+      ]
+    },
+    {
+      "id": "income.salary_date",
+      "category": "income",
+      "intent": "salary_arrival_date",
+      "examples": [
+        "When will my salary arrive?",
+        "What day do I get paid?",
+        "When is my next salary?",
+        "Is salary due this week?",
+        "Salary kab aayegi?",
+        "When did my salary usually come in?",
+        "Predict my next payday",
+        "What's my expected salary date this month?",
+        "Has my salary date changed?",
+        "When should I expect my next paycheck?"
+      ],
+      "required_context": [
+        "salary_transaction_history"
+      ],
+      "expected_action": "Estimate payday from recurring salary deposits and label it as an estimate, not a bank-confirmed promise.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "month",
+        "employer",
+        "salary_account"
+      ]
+    },
+    {
+      "id": "income.salary_amount",
+      "category": "income",
+      "intent": "salary_amount",
+      "examples": [
+        "How much salary do I get?",
+        "What's my monthly take-home?",
+        "Show my last salary credit",
+        "How much do I earn every month?",
+        "What's my average monthly income?",
+        "Meri monthly salary kitni hai?",
+        "How much came in as salary last month?",
+        "Has my salary increased?",
+        "Compare my last three salary credits",
+        "What's my net salary after deductions?"
+      ],
+      "required_context": [
+        "income_transactions"
+      ],
+      "expected_action": "Identify salary credits and report observed amounts; distinguish gross salary from credited take-home pay.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "month",
+        "employer",
+        "income_type"
+      ]
+    },
+    {
+      "id": "transactions.search",
+      "category": "spending",
+      "intent": "search_transactions",
+      "examples": [
+        "Show my transactions from yesterday",
+        "What did I spend at Swiggy?",
+        "Find my Amazon payments",
+        "Show transactions above 5000 rupees",
+        "Where did my money go last weekend?",
+        "List my UPI payments this month",
+        "Mere recent transactions dikhao",
+        "Find the payment to Zomato",
+        "Show all debits from my salary account",
+        "Did I pay Netflix this month?",
+        "Find a transaction for 1,299"
+      ],
+      "required_context": [
+        "transaction_history"
+      ],
+      "expected_action": "Filter transactions using stated merchant, date, amount, account, or type; ask for missing filters only when needed.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "date_range",
+        "merchant",
+        "amount",
+        "account",
+        "transaction_type"
+      ]
+    },
+    {
+      "id": "transactions.explain",
+      "category": "spending",
+      "intent": "explain_transaction",
+      "examples": [
+        "What is this 799 rupee transaction?",
+        "Why was I charged 499?",
+        "Can you explain this debit?",
+        "What did I pay 2,000 for?",
+        "I don't recognise this payment",
+        "Ye 349 ka transaction kya hai?",
+        "Who charged my card yesterday?",
+        "Explain the transaction from ABC Services",
+        "What is this UPI reference?",
+        "Can you identify this unknown merchant?"
+      ],
+      "required_context": [
+        "selected_transaction_or_search_results"
+      ],
+      "expected_action": "Explain only information present in transaction metadata; never invent a merchant or purpose. Offer dispute/report guidance for unrecognised charges.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "transaction_id",
+        "date",
+        "amount",
+        "merchant"
+      ]
+    },
+    {
+      "id": "spending.summary",
+      "category": "spending",
+      "intent": "spending_summary",
+      "examples": [
+        "How much did I spend this month?",
+        "Show my spending for October",
+        "Where am I spending the most?",
+        "Give me a breakdown of my expenses",
+        "How much have I spent this week?",
+        "Is my spending higher than last month?",
+        "Iss month kitna kharcha hua?",
+        "Show my monthly expense summary",
+        "Compare this month with the previous month",
+        "How much did I spend on food and travel?"
+      ],
+      "required_context": [
+        "transaction_history",
+        "date_range"
+      ],
+      "expected_action": "Aggregate expenses by period and category; state excluded or uncategorised transactions where relevant.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "date_range",
+        "category",
+        "account"
+      ]
+    },
+    {
+      "id": "budgets.status",
+      "category": "budgets",
+      "intent": "budget_status",
+      "examples": [
+        "Am I within my budget?",
+        "How much of my monthly budget is left?",
+        "Show my budget status",
+        "Which budgets have I exceeded?",
+        "How much can I still spend on food?",
+        "Budget mein kitna bacha hai?",
+        "Am I overspending this month?",
+        "Show my category-wise limits",
+        "Which category is closest to its limit?",
+        "How much have I used from my shopping budget?"
+      ],
+      "required_context": [
+        "budgets",
+        "categorized_transactions",
+        "current_period"
+      ],
+      "expected_action": "Compare spending against active budget limits and report remaining amount and percentage.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "budget_category",
+        "period"
+      ]
+    },
+    {
+      "id": "budgets.create_or_change",
+      "category": "budgets",
+      "intent": "create_or_change_budget",
+      "examples": [
+        "Set my food budget to 5000",
+        "Create a monthly travel budget",
+        "Increase my shopping limit by 1000",
+        "Change my entertainment budget to 2000",
+        "I want to cap dining at 3000 a month",
+        "Set a budget for groceries",
+        "Mera monthly fuel budget 2500 kar do",
+        "Can you make a new budget for rent?",
+        "Lower my shopping budget next month",
+        "Update my monthly budget"
+      ],
+      "required_context": [
+        "budget_preferences",
+        "current_budgets"
+      ],
+      "expected_action": "Collect category, amount, period, and effective date; preview the change and require confirmation before saving.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "category",
+        "limit_amount",
+        "period",
+        "effective_date"
+      ]
+    },
+    {
+      "id": "goals.progress",
+      "category": "savings",
+      "intent": "savings_goal_progress",
+      "examples": [
+        "How close am I to my savings goal?",
+        "Show my emergency fund progress",
+        "How much have I saved for my laptop?",
+        "Am I on track for my goal?",
+        "How much more do I need to save?",
+        "Mera savings goal kitna complete hua?",
+        "When will I reach my target?",
+        "Show all my savings goals",
+        "What's my progress towards buying a bike?",
+        "How much is left for my trip fund?"
+      ],
+      "required_context": [
+        "savings_goals",
+        "contributions"
+      ],
+      "expected_action": "Show saved amount, target, remaining amount, progress percentage, and projected completion only if contribution history supports it.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "goal_name",
+        "target_date"
+      ]
+    },
+    {
+      "id": "goals.plan_contribution",
+      "category": "savings",
+      "intent": "plan_savings_contribution",
+      "examples": [
+        "How much should I save every month?",
+        "Can I save 10000 monthly?",
+        "Help me reach my goal by December",
+        "How much do I need to put aside each payday?",
+        "Plan my savings for a new phone",
+        "If I save 2000 a week, when will I reach my goal?",
+        "Mujhe har mahine kitna save karna chahiye?",
+        "Can I increase my monthly savings?",
+        "Make a savings plan for my vacation",
+        "How much should I transfer to savings after salary?"
+      ],
+      "required_context": [
+        "income",
+        "fixed_commitments",
+        "budgets",
+        "goal_target"
+      ],
+      "expected_action": "Calculate a proposed contribution plan from available financial data; present as a recommendation and never move money.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "goal_name",
+        "contribution_amount",
+        "frequency",
+        "target_date"
+      ]
+    },
+    {
+      "id": "cashflow.safe_to_spend",
+      "category": "cash_flow",
+      "intent": "safe_to_spend",
+      "examples": [
+        "How much can I safely spend right now?",
+        "Can I afford to spend 3000 today?",
+        "How much money is free after bills and savings?",
+        "What's my safe-to-spend amount until payday?",
+        "Can I spend 5000 without messing up my budget?",
+        "Abhi kitna kharch kar sakta hoon?",
+        "How much is left after upcoming payments?",
+        "Do I have enough spare cash this week?",
+        "What's my disposable amount this month?",
+        "Can I afford dinner out tonight?"
+      ],
+      "required_context": [
+        "account_balances",
+        "upcoming_commitments",
+        "planned_savings",
+        "budget_state",
+        "date_until_next_income"
+      ],
+      "expected_action": "Estimate safe-to-spend after known commitments and planned savings; disclose assumptions and uncertainty. This is not a guarantee of bank availability.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "amount",
+        "date",
+        "category",
+        "next_income_date"
+      ]
+    },
+    {
+      "id": "commitments.upcoming",
+      "category": "bills_subscriptions",
+      "intent": "upcoming_commitments",
+      "examples": [
+        "What bills are due next?",
+        "Show my upcoming payments",
+        "What do I need to pay this week?",
+        "Any subscriptions renewing soon?",
+        "When is my next EMI?",
+        "Mere upcoming bills dikhao",
+        "What payments are due before payday?",
+        "List my recurring expenses",
+        "What's due in the next 30 days?",
+        "Do I have any annual renewals coming up?"
+      ],
+      "required_context": [
+        "commitments",
+        "date"
+      ],
+      "expected_action": "List upcoming commitments with due dates, amounts, frequency, and detection source; distinguish confirmed from inferred items.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "date_range",
+        "commitment_type"
+      ]
+    },
+    {
+      "id": "subscriptions.audit",
+      "category": "bills_subscriptions",
+      "intent": "subscription_audit",
+      "examples": [
+        "Which subscriptions am I paying for?",
+        "Find all my active subscriptions",
+        "Am I paying for anything I don't use?",
+        "Show my recurring app charges",
+        "How much do subscriptions cost me monthly?",
+        "Find subscriptions from my emails",
+        "Koi unnecessary subscription hai kya?",
+        "Which free trials are about to expire?",
+        "Show services that auto-renew",
+        "What subscriptions have I forgotten about?"
+      ],
+      "required_context": [
+        "recurring_transactions_or_email_consent"
+      ],
+      "expected_action": "Identify likely subscriptions, show evidence and confidence, and flag possible duplicates or trials. Email discovery requires explicit read-only OAuth consent.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "service_name",
+        "date_range",
+        "source"
+      ]
+    },
+    {
+      "id": "credit_card.due",
+      "category": "credit_cards",
+      "intent": "credit_card_due",
+      "examples": [
+        "When is my credit card bill due?",
+        "How much do I owe on my card?",
+        "What's my total outstanding on credit cards?",
+        "How much is the minimum due?",
+        "Did I pay my card bill this month?",
+        "Credit card ka due date kya hai?",
+        "Show my next card payment",
+        "How much should I pay to avoid interest?",
+        "Which card bill is due first?",
+        "What's my statement balance?"
+      ],
+      "required_context": [
+        "credit_card_data_or_user_entry"
+      ],
+      "expected_action": "Report available statement/outstanding/due data with dates; distinguish minimum due, total due, and current outstanding.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "card_name",
+        "statement_month"
+      ]
+    },
+    {
+      "id": "loans.emi",
+      "category": "loans",
+      "intent": "loan_emi_details",
+      "examples": [
+        "What EMIs do I have?",
+        "How much do I pay in loans every month?",
+        "When is my next EMI due?",
+        "Show my loan repayment schedule",
+        "How many EMIs are left?",
+        "Mera next EMI kab hai?",
+        "What's my total monthly loan burden?",
+        "How much principal is remaining?",
+        "Show my active loans",
+        "Can I afford another EMI?"
+      ],
+      "required_context": [
+        "loan_details_or_commitments"
+      ],
+      "expected_action": "Summarize recorded loan and EMI details; do not infer outstanding principal or lender terms without source data.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "loan_name",
+        "lender",
+        "loan_amount",
+        "tenure"
+      ]
+    },
+    {
+      "id": "decide.purchase",
+      "category": "purchase_decisions",
+      "intent": "evaluate_purchase",
+      "examples": [
+        "Should I buy this right now?",
+        "Can I afford a new phone?",
+        "Is it a bad idea to spend 15000 on shoes?",
+        "Should I wait until next month to buy this?",
+        "Can I buy this without hurting my savings goal?",
+        "Ye purchase karna chahiye kya?",
+        "Is this worth spending my money on?",
+        "Should I buy now or save the money?",
+        "Can I afford this after paying my bills?",
+        "Help me decide whether to purchase this"
+      ],
+      "required_context": [
+        "purchase_price",
+        "cashflow",
+        "budgets",
+        "goals",
+        "upcoming_commitments"
+      ],
+      "expected_action": "Evaluate affordability, goal impact, timing, and alternatives; ask for price if missing. Never purchase automatically.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "item",
+        "price",
+        "purchase_date",
+        "urgency",
+        "category"
+      ]
+    },
+    {
+      "id": "decide.compare",
+      "category": "purchase_decisions",
+      "intent": "compare_purchase_options",
+      "examples": [
+        "Which of these two should I buy?",
+        "Compare these phones based on my budget",
+        "Is the cheaper one better for me?",
+        "Should I choose EMI or pay upfront?",
+        "Compare buying now versus waiting for a sale",
+        "Which option affects my savings less?",
+        "Help me choose between these laptops",
+        "Is no-cost EMI actually worth it?",
+        "Which plan is cheaper over a year?",
+        "Compare these purchase options financially"
+      ],
+      "required_context": [
+        "options_and_prices",
+        "cashflow",
+        "goals"
+      ],
+      "expected_action": "Compare total cost, affordability, recurring obligations, and goal impact; disclose missing product facts.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "options",
+        "prices",
+        "payment_method",
+        "time_horizon"
+      ]
+    },
+    {
+      "id": "security.unknown_transaction",
+      "category": "fraud_and_security",
+      "intent": "unknown_transaction_help",
+      "examples": [
+        "I see a payment I didn't make",
+        "Someone used my card without permission",
+        "There is an unknown UPI debit",
+        "I think my account has been hacked",
+        "I was charged twice",
+        "Mere account se unknown paise kat gaye",
+        "I don't recognise this transaction",
+        "What should I do about a suspicious debit?",
+        "I lost my debit card, what now?",
+        "I think this is fraud"
+      ],
+      "required_context": [
+        "user_reported_issue",
+        "transaction_if_available"
+      ],
+      "expected_action": "Treat as urgent; advise contacting the bank through its official app/number, blocking affected card or UPI access where appropriate, and reporting promptly. Never ask for OTP, PIN, CVV, or passwords.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "bank_name",
+        "transaction_date",
+        "amount",
+        "payment_rail"
+      ]
+    },
+    {
+      "id": "planning.monthly_plan",
+      "category": "financial_planning",
+      "intent": "monthly_money_plan",
+      "examples": [
+        "Plan my money for this month",
+        "Help me manage my salary",
+        "How should I divide my income?",
+        "Make a budget from my next paycheck",
+        "What should I do with the money left after expenses?",
+        "Salary aane ke baad paise kaise manage karun?",
+        "Create a monthly financial plan",
+        "How much should go to needs, wants, and savings?",
+        "Help me stop running out of money before payday",
+        "Build a plan around my bills and goals"
+      ],
+      "required_context": [
+        "income",
+        "balances",
+        "budgets",
+        "commitments",
+        "goals"
+      ],
+      "expected_action": "Build a proposed allocation in priority order: essentials, obligations, user-selected savings, flexible spending, and buffer. Ask before changing any plan.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "income_amount",
+        "payday",
+        "savings_priority",
+        "fixed_expenses"
+      ]
+    },
+    {
+      "id": "investing.learn",
+      "category": "investments",
+      "intent": "investment_education",
+      "examples": [
+        "Explain mutual funds to me",
+        "What's the difference between stocks and mutual funds?",
+        "Is an SIP the same as a mutual fund?",
+        "How does risk work in investing?",
+        "What is an index fund?",
+        "Should I learn about ETFs?",
+        "Mutual funds kaise kaam karte hain?",
+        "Explain compounding with an example",
+        "What does diversification mean?",
+        "What should a beginner know before investing?"
+      ],
+      "required_context": [
+        "user_question"
+      ],
+      "expected_action": "Provide general educational information, explain risk, and avoid guaranteed returns or personalised buy/sell instructions.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "topic",
+        "experience_level",
+        "time_horizon"
+      ]
+    },
+    {
+      "id": "forecast.cash_shortfall",
+      "category": "financial_planning",
+      "intent": "cash_shortfall_forecast",
+      "examples": [
+        "Will I run out of money before payday?",
+        "Can I cover all my bills this month?",
+        "Am I going to have a cash shortage?",
+        "Will my balance go negative next week?",
+        "Do I have enough for rent and EMI?",
+        "Payday se pehle paise khatam toh nahi honge?",
+        "Forecast my balance until the end of the month",
+        "Will I have enough money for my trip?",
+        "Show my projected cash flow",
+        "Can I make it through this month with my current balance?"
+      ],
+      "required_context": [
+        "current_balances",
+        "expected_income",
+        "commitments",
+        "planned_spending"
+      ],
+      "expected_action": "Project a range or scenario using known inflows/outflows; clearly mark uncertain or missing data and avoid certainty.",
+      "clarification_required": false,
+      "follow_up_slots": [
+        "date_range",
+        "expected_income",
+        "planned_expense"
+      ]
+    },
+    {
+      "id": "help.capabilities",
+      "category": "general",
+      "intent": "capabilities_help",
+      "examples": [
+        "What can you help me with?",
+        "What can Monetra do?",
+        "How do I use this app?",
+        "Can you track my subscriptions?",
+        "Can you make payments for me?",
+        "Can you access my bank account?",
+        "What information do you need from me?",
+        "Help me understand the Decide feature",
+        "What can I ask you?",
+        "Are you able to cancel subscriptions?"
+      ],
+      "required_context": [],
+      "expected_action": "Explain supported features and limitations accurately. State that sensitive financial actions require explicit user review and confirmation.",
+      "clarification_required": false,
+      "follow_up_slots": []
+    },
+    {
+      "id": "followup.timeframe",
+      "category": "conversation",
+      "intent": "change_timeframe",
+      "examples": [
+        "What about last month?",
+        "And for this week?",
+        "Show me the same thing for October",
+        "What about next month?",
+        "Can you compare it with the previous month?",
+        "From January till now?",
+        "Aur pichhle mahine ka?",
+        "What changed since yesterday?",
+        "Only show the last 7 days",
+        "Can you do it for the whole year?"
+      ],
+      "required_context": [
+        "previous_intent_or_result"
+      ],
+      "expected_action": "Reuse the previous intent and change only the requested date range. Ask if there is no prior result to refer to.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "date_range"
+      ]
+    },
+    {
+      "id": "followup.account",
+      "category": "conversation",
+      "intent": "change_account_scope",
+      "examples": [
+        "Only my HDFC account",
+        "What about my other account?",
+        "Exclude my savings account",
+        "Show just the salary account",
+        "Across all banks instead",
+        "Same thing but for SBI",
+        "Only UPI transactions",
+        "Include my credit card too",
+        "Not that account, the other one",
+        "Can you separate them by bank?"
+      ],
+      "required_context": [
+        "previous_intent_or_result",
+        "linked_accounts"
+      ],
+      "expected_action": "Retain the previous intent and filters while changing account scope only.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "account_name",
+        "institution",
+        "account_scope"
+      ]
+    },
+    {
+      "id": "followup.amount_scenario",
+      "category": "conversation",
+      "intent": "what_if_amount",
+      "examples": [
+        "What if I spend 2000 more?",
+        "And if I save 5000 instead?",
+        "What happens if my rent increases?",
+        "What if I delay this purchase?",
+        "Suppose I get paid 3 days late",
+        "What if I pay the full credit card bill?",
+        "Agar 1000 extra kharch karun toh?",
+        "What if I reduce dining by 20 percent?",
+        "Try it with 15000",
+        "Can you recalculate with that amount?"
+      ],
+      "required_context": [
+        "previous_intent_or_result"
+      ],
+      "expected_action": "Recalculate the prior scenario with the changed value; do not modify real budgets or accounts.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "amount",
+        "percentage",
+        "date",
+        "scenario_change"
+      ]
+    },
+    {
+      "id": "followup.explain",
+      "category": "conversation",
+      "intent": "explain_previous_result",
+      "examples": [
+        "Why?",
+        "How did you calculate that?",
+        "Explain that simply",
+        "Where did this number come from?",
+        "Can you break it down?",
+        "Show me the calculation",
+        "What assumptions did you make?",
+        "Why are you saying I can't afford it?",
+        "Explain like I'm new to finance",
+        "Which transactions did you include?"
+      ],
+      "required_context": [
+        "previous_intent_or_result"
+      ],
+      "expected_action": "Explain the previous result using its source data, calculation, and assumptions. Do not invent supporting records.",
+      "clarification_required": false,
+      "follow_up_slots": []
+    },
+    {
+      "id": "ambiguous.generic",
+      "category": "ambiguous",
+      "intent": "request_clarification",
+      "examples": [
+        "How much do I have?",
+        "Can I afford it?",
+        "Is it enough?",
+        "What should I do?",
+        "Show me that",
+        "Is this okay?",
+        "Should I pay now?",
+        "How much is left?",
+        "Can you check it?",
+        "Do I need to worry?"
+      ],
+      "required_context": [
+        "conversation_context"
+      ],
+      "expected_action": "Ask one concise question identifying the missing subject, amount, account, or timeframe. Do not guess.",
+      "clarification_required": true,
+      "follow_up_slots": [
+        "subject",
+        "amount",
+        "account",
+        "date_range"
+      ]
+    },
+    {
+      "id": "unsupported.financial_action",
+      "category": "safety_boundaries",
+      "intent": "unsupported_or_confirmation_required",
+      "examples": [
+        "Transfer 10000 to my friend",
+        "Pay my electricity bill now",
+        "Buy this stock for me",
+        "Cancel my credit card",
+        "Withdraw cash from an ATM",
+        "Send my bank OTP to this number",
+        "Change my UPI PIN",
+        "Move all my savings into this fund",
+        "Book this flight and pay",
+        "Delete this transaction from my bank"
+      ],
+      "required_context": [],
+      "expected_action": "Do not execute financial or irreversible actions. Explain supported next steps and require user-controlled review/confirmation where the product supports a workflow. Never request credentials or OTPs.",
+      "clarification_required": false,
+      "follow_up_slots": []
+    }
+  ],
+  "totals": {
+    "intent_groups": 30,
+    "question_examples": 302,
+    "categories": [
+      "bank_accounts",
+      "income",
+      "spending",
+      "budgets",
+      "savings",
+      "cash_flow",
+      "bills_subscriptions",
+      "credit_cards",
+      "loans",
+      "purchase_decisions",
+      "fraud_and_security",
+      "financial_planning",
+      "investments",
+      "general",
+      "conversation",
+      "ambiguous",
+      "safety_boundaries"
+    ]
+  }
+}
