@@ -10,7 +10,7 @@ import { Screen } from "../components/ui/Screen";
 import { theme } from "../constants/theme";
 import { useAuth } from "../context/AuthContext";
 import {
-  getSalaryProfile, saveSalaryProfile, getMonthlyPlan, saveMonthlyPlan,
+  getSalaryProfile, saveSalaryProfile, getMonthlyPlan, saveMonthlyPlan, askMonetra,
   type PlannedExpense, type LinkedPayment,
 } from "../services/api";
 
@@ -47,6 +47,8 @@ export default function MonthlyPlannerScreen() {
   const [frequency, setFrequency] = useState<PlannedExpense["frequency"]>("once");
   const [loading, setLoading] = useState(true);
   const [savingState, setSavingState] = useState(false);
+  const [recommendation, setRecommendation] = useState("");
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!userId) { setLoading(false); return; }
@@ -96,6 +98,29 @@ export default function MonthlyPlannerScreen() {
     }]);
     setExpenseTitle("");
     setExpenseAmount("");
+  }
+
+  async function getRecommendation() {
+    if (!userId) return;
+    setRecommendationLoading(true);
+    setRecommendation("");
+    const prompt =
+      `Help me review my monthly money plan for ${month.slice(0, 7)}. ` +
+      `Monthly take-home salary: ₹${totals.income}. ` +
+      `Savings set aside first: ₹${totals.saved}. ` +
+      `Safety buffer: ₹${totals.reserve}. ` +
+      `Planned expenses: ₹${totals.planned}. ` +
+      `Existing unpaid bills: ₹${totals.bills}. ` +
+      `Estimated safe-to-spend: ₹${Math.max(0, totals.remaining)}. ` +
+      `Give conservative, practical suggestions. Do not assume money can be transferred or invested automatically.`;
+    try {
+      const result = await askMonetra(prompt);
+      setRecommendation(result.response);
+    } catch (error) {
+      Alert.alert("Couldn't get a recommendation", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setRecommendationLoading(false);
+    }
   }
 
   async function savePlan() {
@@ -252,6 +277,22 @@ export default function MonthlyPlannerScreen() {
           <Summary label="Safe to spend" value={currency(Math.max(0, totals.remaining))} strong />
         </View>
 
+        <View style={styles.recommendationCard}>
+          <View style={styles.rowBetween}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.recommendationTitle}>Monetra's recommendation</Text>
+              <Text style={styles.helper}>Get a second look at your planned allocations.</Text>
+            </View>
+            <Ionicons name="sparkles" size={20} color={theme.colors.primary} />
+          </View>
+          {recommendation ? <Text style={styles.recommendationText}>{recommendation}</Text> : null}
+          <Pressable onPress={getRecommendation} disabled={recommendationLoading} style={styles.recommendationButton}>
+            {recommendationLoading
+              ? <ActivityIndicator size="small" color={theme.colors.primary} />
+              : <Text style={styles.recommendationButtonText}>{recommendation ? "Refresh recommendation" : "Review my plan"}</Text>}
+          </Pressable>
+        </View>
+
         <Pressable onPress={savePlan} disabled={savingState} style={[styles.saveButton, savingState && { opacity: 0.6 }]}>
           {savingState ? <ActivityIndicator color={theme.colors.background} /> : <Text style={styles.saveText}>Save monthly plan</Text>}
         </Pressable>
@@ -317,6 +358,11 @@ const styles = StyleSheet.create({
   addButton: { flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", padding: 12, borderRadius: 11, borderWidth: 1, borderColor: theme.colors.primaryMuted },
   addText: { color: theme.colors.primary, fontSize: 12, fontWeight: "700" },
   summaryCard: { backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.lg, padding: 16, gap: 12 },
+  recommendationCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radius.lg, padding: 16, gap: 12 },
+  recommendationTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  recommendationText: { color: theme.colors.secondary, fontSize: 12, lineHeight: 19 },
+  recommendationButton: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.primaryMuted, alignItems: "center", justifyContent: "center" },
+  recommendationButtonText: { color: theme.colors.primary, fontSize: 12, fontWeight: "700" },
   summaryLabel: { color: theme.colors.secondary, fontSize: 12 },
   summaryValue: { color: theme.colors.text, fontSize: 12, fontWeight: "600" },
   strong: { color: theme.colors.primary, fontWeight: "800", fontSize: 14 },
