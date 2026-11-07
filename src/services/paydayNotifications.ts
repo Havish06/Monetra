@@ -14,6 +14,12 @@ export async function syncPaydayReminders(
     return false;
   }
 
+  let permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted && requestPermission) {
+    permission = await Notifications.requestPermissionsAsync();
+  }
+  if (!permission.granted) return false;
+
   const existing = await Notifications.getAllScheduledNotificationsAsync();
   const previous = existing.filter(notification =>
     notification.content.data?.tag === REMINDER_TAG &&
@@ -24,12 +30,6 @@ export async function syncPaydayReminders(
       Notifications.cancelScheduledNotificationAsync(notification.identifier)
     )
   );
-
-  let permission = await Notifications.getPermissionsAsync();
-  if (!permission.granted && requestPermission) {
-    permission = await Notifications.requestPermissionsAsync();
-  }
-  if (!permission.granted) return false;
 
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
