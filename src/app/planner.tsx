@@ -247,7 +247,7 @@ export default function MonthlyPlannerScreen() {
                   </Text>
                 </View>
               ))}
-              <Text style={styles.helper}>These are pulled from Bills and are already included in your safe-to-spend calculation.</Text>
+              <Text style={styles.helper}>Pulled from Bills and included in your calculation. Items without an amount cannot be reserved until you add one in Bills.</Text>
             </View>
           )}
           <Field label="Expense title" value={expenseTitle} onChangeText={setExpenseTitle} placeholder="Rent, dinner, internet..." />
