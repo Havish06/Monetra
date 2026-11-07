@@ -11,6 +11,7 @@ import app.models.savings_goal
 import app.models.savings_contribution
 import app.models.commitment
 import app.models.payment
+import app.models.monthly_planner
 
 from alembic import context
 import os
