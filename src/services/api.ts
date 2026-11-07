@@ -118,6 +118,38 @@ export type Payment = {
   created_at: string;
 };
 
+
+export type SalaryProfile = {
+  id: string;
+  user_id: string;
+  monthly_salary: number | string;
+  payday_day: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlannedExpense = {
+  id: string;
+  title: string;
+  amount: number | string;
+  due_date: string;
+  category: string;
+  frequency: "once" | "monthly" | "yearly";
+};
+
+export type MonthlyPlan = {
+  id: string | null;
+  month_start: string;
+  salary_amount: number | string;
+  savings_amount: number | string;
+  buffer_amount: number | string;
+  planned_expenses: PlannedExpense[];
+  planned_expenses_total: number | string;
+  safe_to_spend: number | string;
+  over_allocated_by: number | string;
+  updated_at: string | null;
+};
+
 type RequestOptions = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
@@ -582,6 +614,47 @@ export async function deleteCommitment(
     { method: "DELETE" }
   );
   await invalidateDashboard(userId);
+}
+
+
+// MONTHLY PLANNER
+
+export function getSalaryProfile(userId: string) {
+  return apiRequest<SalaryProfile | null>(
+    `${userPath(userId)}/monthly-planner/salary`
+  );
+}
+
+export async function saveSalaryProfile(
+  userId: string,
+  payload: { monthly_salary: number; payday_day: number }
+) {
+  return apiRequest<SalaryProfile>(
+    `${userPath(userId)}/monthly-planner/salary`,
+    { method: "PUT", body: payload }
+  );
+}
+
+export function getMonthlyPlan(userId: string, month: string) {
+  return apiRequest<MonthlyPlan>(
+    `${userPath(userId)}/monthly-planner/plan?month=${encodeURIComponent(month)}`
+  );
+}
+
+export async function saveMonthlyPlan(
+  userId: string,
+  month: string,
+  payload: {
+    salary_amount: number;
+    savings_amount: number;
+    buffer_amount: number;
+    planned_expenses: PlannedExpense[];
+  }
+) {
+  return apiRequest<MonthlyPlan>(
+    `${userPath(userId)}/monthly-planner/plan?month=${encodeURIComponent(month)}`,
+    { method: "PUT", body: payload }
+  );
 }
 
 // MONETRA AI
