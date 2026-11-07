@@ -12,6 +12,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.profile import router as profile_router
 from app.api.ai import router as ai_router
 from app.api.payments import router as payments_router
+from app.api.monthly_planner import router as monthly_planner_router
 
 
 app = FastAPI(
@@ -30,6 +31,7 @@ app.include_router(dashboard_router)
 app.include_router(profile_router)
 app.include_router(ai_router)
 app.include_router(payments_router)
+app.include_router(monthly_planner_router)
 
 app.add_middleware(
     CORSMiddleware,
