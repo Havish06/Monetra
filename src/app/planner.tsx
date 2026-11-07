@@ -22,6 +22,11 @@ const currency = (value: number) => new Intl.NumberFormat("en-IN", {
   style: "currency", currency: "INR", maximumFractionDigits: 0,
 }).format(Number.isFinite(value) ? value : 0);
 const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const shiftMonth = (value: string, amount: number) => {
+  const date = new Date(value + "T12:00:00");
+  date.setMonth(date.getMonth() + amount);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+};
 
 export default function MonthlyPlannerScreen() {
   const router = useRouter();
@@ -147,17 +152,15 @@ export default function MonthlyPlannerScreen() {
 
         <View style={styles.monthRow}>
           <Text style={styles.sectionTitle}>Planning month</Text>
-          <TextInput
-            value={month.slice(0, 7)}
-            onChangeText={value => {
-              if (/^\d{4}-\d{2}$/.test(value)) {
-                const [year, monthNumber] = value.split("-").map(Number);
-                if (monthNumber >= 1 && monthNumber <= 12) setMonth(value + "-01");
-              }
-            }}
-            placeholder="YYYY-MM" placeholderTextColor={theme.colors.muted}
-            style={styles.monthInput} maxLength={7}
-          />
+          <View style={styles.monthControls}>
+            <Pressable onPress={() => setMonth(value => shiftMonth(value, -1))} style={styles.monthArrow}>
+              <Ionicons name="chevron-back" size={17} color={theme.colors.text} />
+            </Pressable>
+            <Text style={styles.monthLabel}>{new Date(month + "T12:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
+            <Pressable onPress={() => setMonth(value => shiftMonth(value, 1))} style={styles.monthArrow}>
+              <Ionicons name="chevron-forward" size={17} color={theme.colors.text} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.hero}>
@@ -263,7 +266,9 @@ const styles = StyleSheet.create({
   eyebrow: { color: theme.colors.secondary, fontSize: 9, letterSpacing: 1.4, fontWeight: "700", marginBottom: 5 },
   heading: { color: theme.colors.text, fontSize: 24, fontWeight: "700", letterSpacing: -0.8 },
   monthRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  monthInput: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, minWidth: 100, textAlign: "center" },
+  monthControls: { flexDirection: "row", alignItems: "center", gap: 12 },
+  monthArrow: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, alignItems: "center", justifyContent: "center" },
+  monthLabel: { color: theme.colors.text, fontSize: 12, fontWeight: "600", minWidth: 105, textAlign: "center" },
   hero: { backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 20, gap: 7 },
   heroLabel: { color: theme.colors.primary, fontSize: 10, letterSpacing: 1.3, fontWeight: "700" },
   heroAmount: { color: theme.colors.text, fontSize: 32, fontWeight: "700", letterSpacing: -1 },
