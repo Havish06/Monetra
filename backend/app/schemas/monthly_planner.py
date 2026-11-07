@@ -37,6 +37,14 @@ class MonthlyPlanUpsert(BaseModel):
     planned_expenses: list[PlannedExpenseInput] = Field(default_factory=list, max_length=100)
 
 
+class LinkedPaymentResponse(BaseModel):
+    id: uuid.UUID
+    title: str
+    amount: Decimal | None
+    due_date: date
+    status: Literal["pending", "overdue", "paid"]
+
+
 class MonthlyPlanResponse(BaseModel):
     id: uuid.UUID | None
     month_start: date
@@ -45,6 +53,8 @@ class MonthlyPlanResponse(BaseModel):
     buffer_amount: Decimal
     planned_expenses: list[PlannedExpenseInput]
     planned_expenses_total: Decimal
+    linked_payments: list[LinkedPaymentResponse]
+    linked_payments_total: Decimal
     safe_to_spend: Decimal
     over_allocated_by: Decimal
     updated_at: datetime | None
