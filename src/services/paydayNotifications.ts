@@ -3,6 +3,7 @@ import * as Notifications from "expo-notifications";
 
 const CHANNEL_ID = "payday-reminders";
 const REMINDER_TAG = "monetra-payday-reminder";
+const MONTHS_TO_SCHEDULE = 12;
 // Explicitly show local reminders even when Monetra is currently open.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
