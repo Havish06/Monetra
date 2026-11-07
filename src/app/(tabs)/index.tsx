@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+
 import { getDashboardCache } from "../../lib/appCache";
 import { Screen } from "../../components/ui/Screen";
 import { SectionHeader } from "../../components/ui/SectionHeader";
@@ -17,83 +19,85 @@ import { BalanceCard } from "../../components/dashboard/BalanceCard";
 import { theme } from "../../constants/theme";
 import { getDashboard, type DashboardData } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { useRouter } from "expo-router";
 
 export default function HomeScreen() {
   const { profile, loading: authLoading } = useAuth();
+  const router = useRouter();
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
 
-  const router = useRouter();
+  // Runs whenever the Home tab becomes active.
+  useFocusEffect(
+    useCallback(() => {
+      if (authLoading) return;
 
-  useEffect(() => {
-    if (authLoading) return;
+      const userId = profile?.id;
 
-    if (!profile?.id) {
-      setLoading(false);
-      setData(null);
-      setError("Your Monetra profile is unavailable. Please sign in again.");
-      return;
-    }
-
-    let active = true;
-
-    async function initializeDashboard() {
-      setError(null);
-
-      // Show the loading screen only when no data is available.
-      if (!data) {
-        setLoading(true);
+      if (!userId) {
+        setLoading(false);
+        setData(null);
+        setError("Your Monetra profile is unavailable. Please sign in again.");
+        return;
       }
 
-      try {
-        // 1. Read cached dashboard first.
-        const cached = await getDashboardCache(profile!.id);
+      const authenticatedUserId: string = userId;
 
-        if (!active) return;
+      let active = true;
 
-        // 2. Display cached data immediately.
-        if (cached) {
-          setData(cached);
-          setLoading(false);
+      async function refreshDashboard() {
+        // Only show initial loading when there is no data.
+        if (!data) {
+          setLoading(true);
         }
 
-        // 3. Fetch fresh data from the backend.
-        const fresh = await getDashboard(profile!.id);
+        // Cached data is displayed immediately.
+        try {
+          const cached = await getDashboardCache(authenticatedUserId);
+          if (!active) return;
 
-        if (!active) return;
+          if (cached) {
+            setData(cached);
+            setLoading(false);
+          }
+        } catch (cacheError) {
+          console.warn("Dashboard cache unavailable:", cacheError);
+        }
 
-        // 4. Replace cached data with fresh data.
-        setData(fresh);
-        setError(null);
-      } catch (err: unknown) {
-        if (!active) return;
+        // Fetch the latest data silently.
+        try {
+          const fresh = await getDashboard(authenticatedUserId);
 
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Unable to load your dashboard.";
+          if (!active) return;
 
-        setError(message);
+          setData(fresh);
+          setError(null);
+        } catch (err: unknown) {
+          if (!active) return;
 
-        // Keep cached data visible if the request fails.
-        console.error("Dashboard refresh failed:", message);
-      } finally {
-        if (active) {
-          setLoading(false);
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Unable to refresh your dashboard.";
+
+          setError(message);
+          console.error("Dashboard refresh failed:", message);
+        } finally {
+          if (active) {
+            setLoading(false);
+          }
         }
       }
-    }
 
-    initializeDashboard();
+      refreshDashboard();
 
-    return () => {
-      active = false;
-    };
-  }, [authLoading, profile?.id, retry]);
+      return () => {
+        active = false;
+      };
+    }, [authLoading, profile?.id, retry])
+  );
 
   if (authLoading || (loading && !data)) {
     return (
@@ -103,9 +107,8 @@ export default function HomeScreen() {
             size="large"
             color={theme.colors.primary}
           />
-
           <Text style={styles.stateText}>
-            Loading your Monetra dashboard...
+            Preparing your Monetra dashboard...
           </Text>
         </View>
       </Screen>
@@ -126,9 +129,7 @@ export default function HomeScreen() {
             Couldn't load your dashboard
           </Text>
 
-          <Text style={styles.stateText}>
-            {error}
-          </Text>
+          <Text style={styles.stateText}>{error}</Text>
 
           <Pressable
             style={styles.retryButton}
@@ -147,8 +148,9 @@ export default function HomeScreen() {
     profile?.full_name?.trim().split(/\s+/)[0] || "there";
 
   return (
-    <Screen>
+    <Screen scroll = {false}>
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
@@ -214,7 +216,6 @@ export default function HomeScreen() {
           <View style={styles.statCard}>
             <View style={styles.statRow}>
               <Text style={styles.statLabel}>Total saved</Text>
-
               <Text style={styles.statValue}>
                 {formatCurrency(data.total_saved)}
               </Text>
@@ -222,13 +223,112 @@ export default function HomeScreen() {
 
             <View style={styles.statRow}>
               <Text style={styles.statLabel}>Savings target</Text>
-
               <Text style={styles.statValue}>
                 {formatCurrency(data.total_savings_target)}
               </Text>
             </View>
           </View>
         </View>
+
+
+        <View style={styles.section}>
+          <SectionHeader title="Recent transactions" />
+
+          {data.recent_transactions.length === 0 ? (
+            <Text style={styles.emptyText}>No transactions yet.</Text>
+          ) : (
+            data.recent_transactions.slice(0, 5).map((item) => (
+              <View key={item.id} style={styles.commitment}>
+                <View style={styles.commitmentIcon}>
+                  <Ionicons
+                    name={
+                      item.transaction_type === "income"
+                        ? "arrow-down-outline"
+                        : "arrow-up-outline"
+                    }
+                    size={19}
+                    color={theme.colors.primary}
+                  />
+                </View>
+
+                <View style={styles.commitmentInfo}>
+                  <Text style={styles.commitmentTitle}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.commitmentSubtitle}>
+                    {item.category ?? "Uncategorized"} ·{" "}
+                    {String(item.transaction_date).slice(0, 10)}
+                  </Text>
+                </View>
+
+                <Text style={styles.commitmentAmount}>
+                  {item.transaction_type === "expense" ? "-" : "+"}
+                  {formatCurrency(Number(item.amount))}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+        
+        <View style={styles.section}>
+          <SectionHeader title="Budget overview" />
+
+          {!Array.isArray(data.budgets) || data.budgets.length === 0 ? (
+            <Text style={styles.emptyText}>No budgets created yet.</Text>
+          ) : (
+            data.budgets.slice(0, 4).map((item: any, index: number) => {
+              // Support both nested and flattened API responses.
+              const budget = item?.budget ?? item;
+
+              const category =
+                budget?.category ?? budget?.name ?? "Budget";
+
+              const spent = Number(item?.spent ?? 0);
+              const limit = Number(
+                budget?.limit_amount ?? item?.limit_amount ?? 0
+              );
+
+              const rawPercentage = Number(
+                item?.utilization_percentage ??
+                  (limit > 0 ? (spent / limit) * 100 : 0)
+              );
+
+              const percentage = Math.max(0, Math.min(100, rawPercentage));
+              const exceeded = item?.is_exceeded ?? (limit > 0 && spent > limit);
+
+              return (
+                <View key={budget?.id ?? index} style={styles.statCard}>
+                  <View style={styles.statRow}>
+                    <Text style={styles.statLabel}>{category}</Text>
+                    <Text style={styles.statValue}>
+                      {rawPercentage.toFixed(0)}%
+                    </Text>
+                  </View>
+
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${percentage}%` },
+                        exceeded && styles.progressExceeded,
+                      ]}
+                    />
+                  </View>
+
+                  <View style={styles.statRow}>
+                    <Text style={styles.statLabel}>
+                      Spent: {formatCurrency(spent)}
+                    </Text>
+                    <Text style={styles.statLabel}>
+                      Limit: {formatCurrency(limit)}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
 
         <View style={styles.section}>
           <SectionHeader title="Upcoming commitments" />
@@ -277,7 +377,10 @@ export default function HomeScreen() {
           <SectionHeader title="Quick actions" />
 
           <View style={styles.actions}>
-            <Pressable style={styles.action}>
+            <Pressable
+              style={styles.action}
+              onPress={() => router.push("/(tabs)/decide")}
+            >
               <Ionicons
                 name="scan-outline"
                 size={21}
@@ -289,7 +392,10 @@ export default function HomeScreen() {
               </Text>
             </Pressable>
 
-            <Pressable style={styles.action}>
+            <Pressable
+              style={styles.action}
+              onPress={() => router.push("/(tabs)/bills")}
+            >
               <Ionicons
                 name="add-circle-outline"
                 size={21}
@@ -297,7 +403,7 @@ export default function HomeScreen() {
               />
 
               <Text style={styles.actionText}>
-                Add subscription
+                Manage subscriptions
               </Text>
             </Pressable>
           </View>
@@ -305,7 +411,7 @@ export default function HomeScreen() {
 
         {error && data && (
           <Text style={styles.refreshNotice}>
-            Showing saved data. Couldn't refresh right now.
+            Couldn't refresh your latest data. Showing your saved overview.
           </Text>
         )}
       </ScrollView>
@@ -325,6 +431,20 @@ const styles = StyleSheet.create({
   content: {
     gap: 22,
     paddingBottom: 30,
+  },
+  progressTrack: {
+    height: 7,
+    backgroundColor: theme.colors.border,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+  },
+  progressExceeded: {
+    backgroundColor: theme.colors.warning,
   },
   header: {
     flexDirection: "row",

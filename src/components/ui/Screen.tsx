@@ -1,3 +1,4 @@
+
 import {
   ScrollView,
   StyleSheet,
@@ -17,16 +18,19 @@ type Props = {
 
 export function Screen({ children, style, scroll = true }: Props) {
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       {scroll ? (
         <ScrollView
+          style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={[styles.content, style]}
+          contentContainerStyle={styles.content}
         >
           {children}
         </ScrollView>
       ) : (
-        <View style={[styles.content, style]}>{children}</View>
+        <View style={[styles.content, styles.fixedContent, style]}>
+          {children}
+        </View>
       )}
     </SafeAreaView>
   );
@@ -40,7 +44,10 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.lg,
-    paddingBottom: 36,
+    paddingBottom: 12,
     gap: theme.spacing.xl,
+  },
+  fixedContent: {
+    flex: 1,
   },
 });

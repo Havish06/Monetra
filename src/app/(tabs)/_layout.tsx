@@ -1,16 +1,24 @@
 
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import type { ComponentProps } from "react";
 import { theme } from "../../constants/theme";
 
-const tabs = [
+type IconName = ComponentProps<typeof Ionicons>["name"];
+
+const tabs: {
+  name: string;
+  title: string;
+  icon: IconName;
+  active: IconName;
+}[] = [
   { name: "index", title: "Home", icon: "grid-outline", active: "grid" },
   { name: "accounts", title: "Money", icon: "wallet-outline", active: "wallet" },
-  { name: "decide", title: "Decide", icon: "scan-outline", active: "scan" },
   { name: "plans", title: "Plans", icon: "calendar-outline", active: "calendar" },
   { name: "bills", title: "Bills", icon: "repeat-outline", active: "repeat" },
-  { name: "ai", title: "Monetra AI", icon: "sparkles-outline", active: "sparkles" },
-] as const;
+  { name: "decide", title: "Decide", icon: "sparkles", active: "sparkles" },
+  // { name: "ai", title: "Monetra AI", icon: "sparkles-outline", active: "sparkles" },
+];
 
 export default function TabLayout() {
   return (
@@ -41,9 +49,13 @@ export default function TabLayout() {
             title: tab.title,
             tabBarIcon: ({ color, focused, size }) => (
               <Ionicons
-                name={(focused ? tab.active : tab.icon) as any}
+                name={focused ? tab.active : tab.icon}
                 size={size}
-                color={color}
+                color={
+                  typeof color === "string"
+                    ? color
+                    : String(theme.colors.secondary)
+                }
               />
             ),
           }}

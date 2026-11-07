@@ -10,6 +10,7 @@ import app.models.budget
 import app.models.savings_goal
 import app.models.savings_contribution
 import app.models.commitment
+import app.models.payment
 
 from alembic import context
 import os

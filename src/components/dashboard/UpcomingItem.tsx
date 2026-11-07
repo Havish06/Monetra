@@ -12,11 +12,14 @@ const icons = {
 } as const;
 
 export function UpcomingItem({ item }: { item: UpcomingItemData }) {
+  const iconName =
+    icons[item.type as keyof typeof icons] ?? "calendar-outline";
+
   return (
     <Surface style={styles.item}>
       <View style={styles.icon}>
         <Ionicons
-          name={icons[item.type]}
+          name={iconName}
           size={20}
           color={theme.colors.primary}
         />

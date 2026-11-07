@@ -30,6 +30,68 @@ export type Transaction = {
   created_at: string;
 };
 
+export type Budget = {
+  id: string;
+  user_id: string;
+  name: string;
+  category: string;
+  limit_amount: number | string;
+  period: "weekly" | "monthly" | "yearly" | "custom";
+  start_date: string;
+  end_date: string | null;
+  created_at: string;
+};
+
+export type BudgetSummary = {
+  budget: Budget;
+  spent: number | string;
+  remaining: number | string;
+  utilization_percentage: number | string;
+  is_exceeded: boolean;
+};
+
+export type SavingsGoal = {
+  id: string;
+  user_id: string;
+  name: string;
+  target_amount: number | string;
+  target_date: string | null;
+  status: "active" | "completed" | "paused" | "cancelled";
+  created_at: string;
+};
+
+export type SavingsGoalSummary = {
+  goal: SavingsGoal;
+  total_saved: number | string;
+  remaining: number | string;
+  progress_percentage: number | string;
+  is_completed: boolean;
+};
+
+export type SavingsContribution = {
+  id: string;
+  goal_id: string;
+  user_id: string;
+  amount: number | string;
+  contribution_date: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type Commitment = {
+  id: string;
+  user_id: string;
+  title: string;
+  commitment_type: string;
+  amount: number | string | null;
+  frequency: string;
+  next_due_date: string | null;
+  end_date: string | null;
+  auto_renewal: boolean;
+  status: "active" | "paused" | "cancelled" | "completed" | "expired";
+  created_at: string;
+};
+
 export type DashboardData = {
   total_account_balance: number;
   monthly_income: number;
@@ -40,9 +102,20 @@ export type DashboardData = {
   upcoming_commitments_count: number;
   accounts: Account[];
   recent_transactions: Transaction[];
-  budgets: any[];
-  savings_goals: any[];
-  upcoming_commitments: any[];
+  budgets: BudgetSummary[];
+  savings_goals: SavingsGoalSummary[];
+  upcoming_commitments: Commitment[];
+};
+
+export type Payment = {
+  id: string;
+  commitment_id: string;
+  user_id: string;
+  amount: number | string | null;
+  due_date: string;
+  status: "pending" | "overdue" | "paid";
+  paid_at: string | null;
+  created_at: string;
 };
 
 type RequestOptions = {
@@ -99,7 +172,8 @@ async function invalidateDashboard(userId: string) {
   await clearDashboardCache(userId);
 }
 
-// Dashboard
+// DASHBOARD
+
 export async function getDashboard(
   userId: string
 ): Promise<DashboardData> {
@@ -113,7 +187,41 @@ export async function getDashboard(
   return dashboard;
 }
 
-// Accounts
+// PAYMENTS
+
+// PAYMENTS
+
+export function getPayments(
+  userId: string,
+  status?: Payment["status"],
+) {
+  const query = status
+    ? `?status=${encodeURIComponent(status)}`
+    : "";
+
+  return apiRequest<Payment[]>(
+    `${userPath(userId)}/payments${query}`,
+  );
+}
+
+export async function markPaymentPaid(
+  userId: string,
+  paymentId: string,
+) {
+  const result = await apiRequest<Payment>(
+    `${userPath(userId)}/payments/${paymentId}/pay`,
+    {
+      method: "PATCH",
+    },
+  );
+
+  await invalidateDashboard(userId);
+
+  return result;
+}
+
+// ACCOUNTS
+
 export function getAccounts(userId: string) {
   return apiRequest<Account[]>(`${userPath(userId)}/accounts`);
 }
@@ -169,7 +277,8 @@ export async function deleteAccount(
   await invalidateDashboard(userId);
 }
 
-// Transactions
+// TRANSACTIONS
+
 export async function getTransactions(
   userId: string,
   filter: "all" | "income" | "expense" = "all"
@@ -240,4 +349,276 @@ export async function deleteTransaction(
   );
 
   await invalidateDashboard(userId);
+}
+
+// BUDGETS
+
+export function getBudgets(userId: string) {
+  return apiRequest<Budget[]>(
+    `${userPath(userId)}/budgets`
+  );
+}
+
+export function getBudgetSummaries(userId: string) {
+  return apiRequest<BudgetSummary[]>(
+    `${userPath(userId)}/budgets/summary`
+  );
+}
+
+export async function createBudget(
+  userId: string,
+  payload: {
+    name: string;
+    category: string;
+    limit_amount: number;
+    period: Budget["period"];
+    start_date: string;
+    end_date: string | null;
+  }
+) {
+  const result = await apiRequest<Budget>(
+    `${userPath(userId)}/budgets`,
+    { method: "POST", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function updateBudget(
+  userId: string,
+  budgetId: string,
+  payload: Partial<{
+    name: string;
+    category: string;
+    limit_amount: number;
+    period: Budget["period"];
+    start_date: string;
+    end_date: string | null;
+  }>
+) {
+  const result = await apiRequest<Budget>(
+    `${userPath(userId)}/budgets/${budgetId}`,
+    { method: "PATCH", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function deleteBudget(
+  userId: string,
+  budgetId: string
+) {
+  await apiRequest<void>(
+    `${userPath(userId)}/budgets/${budgetId}`,
+    { method: "DELETE" }
+  );
+  await invalidateDashboard(userId);
+}
+
+// SAVINGS GOALS
+
+export function getSavingsGoals(userId: string) {
+  return apiRequest<SavingsGoal[]>(
+    `${userPath(userId)}/savings-goals`
+  );
+}
+
+export function getSavingsGoalSummaries(userId: string) {
+  return apiRequest<SavingsGoalSummary[]>(
+    `${userPath(userId)}/savings-goals/summary`
+  );
+}
+
+export async function createSavingsGoal(
+  userId: string,
+  payload: {
+    name: string;
+    target_amount: number;
+    target_date: string | null;
+  }
+) {
+  const result = await apiRequest<SavingsGoal>(
+    `${userPath(userId)}/savings-goals`,
+    { method: "POST", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function updateSavingsGoal(
+  userId: string,
+  goalId: string,
+  payload: Partial<{
+    name: string;
+    target_amount: number;
+    target_date: string | null;
+    status: SavingsGoal["status"];
+  }>
+) {
+  const result = await apiRequest<SavingsGoal>(
+    `${userPath(userId)}/savings-goals/${goalId}`,
+    { method: "PATCH", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function deleteSavingsGoal(
+  userId: string,
+  goalId: string
+) {
+  await apiRequest<void>(
+    `${userPath(userId)}/savings-goals/${goalId}`,
+    { method: "DELETE" }
+  );
+  await invalidateDashboard(userId);
+}
+
+// SAVINGS CONTRIBUTIONS
+
+export function getSavingsContributions(
+  userId: string,
+  goalId: string
+) {
+  return apiRequest<SavingsContribution[]>(
+    `${userPath(userId)}/savings-goals/${goalId}/contributions`
+  );
+}
+
+export async function createSavingsContribution(
+  userId: string,
+  goalId: string,
+  payload: {
+    amount: number;
+    contribution_date: string;
+    note: string | null;
+  }
+) {
+  const result = await apiRequest<SavingsContribution>(
+    `${userPath(userId)}/savings-goals/${goalId}/contributions`,
+    { method: "POST", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function deleteSavingsContribution(
+  userId: string,
+  goalId: string,
+  contributionId: string
+) {
+  await apiRequest<void>(
+    `${userPath(userId)}/savings-goals/${goalId}/contributions/${contributionId}`,
+    { method: "DELETE" }
+  );
+  await invalidateDashboard(userId);
+}
+
+// COMMITMENTS
+
+export function getCommitments(userId: string) {
+  return apiRequest<Commitment[]>(
+    `${userPath(userId)}/commitments`
+  );
+}
+
+export function getUpcomingCommitments(
+  userId: string,
+  days = 30
+) {
+  return apiRequest<Commitment[]>(
+    `${userPath(userId)}/commitments/upcoming?days=${days}`
+  );
+}
+
+export async function createCommitment(
+  userId: string,
+  payload: {
+    title: string;
+    commitment_type: string;
+    amount: number | null;
+    frequency: string;
+    next_due_date: string | null;
+    end_date: string | null;
+    auto_renewal: boolean;
+  }
+) {
+  const result = await apiRequest<Commitment>(
+    `${userPath(userId)}/commitments`,
+    { method: "POST", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function updateCommitment(
+  userId: string,
+  commitmentId: string,
+  payload: Partial<{
+    title: string;
+    commitment_type: string;
+    amount: number | null;
+    frequency: string;
+    next_due_date: string | null;
+    end_date: string | null;
+    auto_renewal: boolean;
+    status: Commitment["status"];
+  }>
+) {
+  const result = await apiRequest<Commitment>(
+    `${userPath(userId)}/commitments/${commitmentId}`,
+    { method: "PATCH", body: payload }
+  );
+  await invalidateDashboard(userId);
+  return result;
+}
+
+export async function deleteCommitment(
+  userId: string,
+  commitmentId: string
+) {
+  await apiRequest<void>(
+    `${userPath(userId)}/commitments/${commitmentId}`,
+    { method: "DELETE" }
+  );
+  await invalidateDashboard(userId);
+}
+
+// MONETRA AI
+
+export type MonetraAIResponse = {
+  message: string;
+  intent: string;
+  category: string | null;
+  confidence: number;
+  response: string;
+  decision: Record<string, unknown>;
+  analysis: Record<string, any>;
+  clarification_required: boolean;
+};
+
+export async function askMonetra(
+  message: string,
+  previousIntent?: string | null,
+  previousResult?: Record<string, any> | null
+): Promise<MonetraAIResponse> {
+  return apiRequest<MonetraAIResponse>("/api/v1/ai/chat", {
+    method: "POST",
+    body: {
+      message,
+      previous_intent: previousIntent ?? null,
+      previous_result: previousResult ?? null,
+    },
+  });
+}
+
+export async function getMonetraFinancialOverview() {
+  return apiRequest<{
+    analysis: Record<string, any>;
+    fetched_at: string;
+    date_range: {
+      start_date: string;
+      end_date: string;
+    };
+  }>("/api/v1/ai/financial-overview");
 }

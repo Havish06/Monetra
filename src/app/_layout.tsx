@@ -48,7 +48,6 @@ export default function RootLayout() {
       <AuthProvider>
         <StatusBar
           style="light"
-          backgroundColor={theme.colors.background}
         />
         <NavigationGuard />
       </AuthProvider>
