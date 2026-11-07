@@ -13,6 +13,7 @@ import {
   getSalaryProfile, saveSalaryProfile, getMonthlyPlan, saveMonthlyPlan, askMonetra,
   type PlannedExpense, type LinkedPayment,
 } from "../services/api";
+import { syncPaydayReminders } from "../services/paydayNotifications";
 
 const currentMonth = () => {
   const now = new Date();
@@ -50,6 +51,7 @@ export default function MonthlyPlannerScreen() {
   const [savingState, setSavingState] = useState(false);
   const [recommendation, setRecommendation] = useState("");
   const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [reminderLoading, setReminderLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!userId) { setLoading(false); return; }
@@ -175,6 +177,28 @@ export default function MonthlyPlannerScreen() {
     }
   }
 
+  async function enablePaydayReminders() {
+    if (!userId) return;
+    const paydayNumber = Number(payday);
+    if (!Number.isInteger(paydayNumber) || paydayNumber < 1 || paydayNumber > 31) {
+      Alert.alert("Invalid payday", "Choose a day from 1 to 31 before enabling reminders.");
+      return;
+    }
+    setReminderLoading(true);
+    try {
+      const enabled = await syncPaydayReminders(userId, paydayNumber, true);
+      if (enabled) {
+        Alert.alert("Payday reminders enabled", `Monetra will remind you at 9:00 AM on day ${paydayNumber} of each month.`);
+      } else {
+        Alert.alert("Notifications are off", "Allow notifications for Monetra in your device settings, then try again.");
+      }
+    } catch (error) {
+      Alert.alert("Couldn't enable reminders", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setReminderLoading(false);
+    }
+  }
+
   async function savePlan() {
     if (!userId) return;
     const income = Number(salary);
@@ -200,6 +224,7 @@ export default function MonthlyPlannerScreen() {
     setSavingState(true);
     try {
       await saveSalaryProfile(userId, { monthly_salary: income, payday_day: paydayNumber });
+      await syncPaydayReminders(userId, paydayNumber, false);
       await saveMonthlyPlan(userId, month, {
         salary_amount: income, savings_amount: saved,
         buffer_amount: reserve, planned_expenses: expenses,
@@ -323,6 +348,12 @@ export default function MonthlyPlannerScreen() {
           <Text style={styles.helper}>Set your monthly take-home salary. Payday defaults to the 5th.</Text>
           <Field label="Monthly salary (₹)" value={salary} onChangeText={setSalary} keyboard="numeric" placeholder="45000" />
           <Field label="Salary day of month" value={payday} onChangeText={setPayday} keyboard="numeric" placeholder="5" />
+          <Pressable onPress={enablePaydayReminders} disabled={reminderLoading} style={styles.reminderButton}>
+            {reminderLoading
+              ? <ActivityIndicator size="small" color={theme.colors.primary} />
+              : <><Ionicons name="notifications-outline" size={16} color={theme.colors.primary} /><Text style={styles.reminderButtonText}>Enable payday reminders</Text></>}
+          </Pressable>
+          <Text style={styles.helper}>Optional local notification at 9:00 AM on your payday. No account or server access needed.</Text>
         </View>
 
         <View style={styles.card}>
@@ -484,6 +515,8 @@ const styles = StyleSheet.create({
   card: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radius.lg, padding: 16, gap: 12 },
   sectionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
   helper: { color: theme.colors.secondary, fontSize: 11, lineHeight: 17 },
+  reminderButton: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 11, borderWidth: 1, borderColor: theme.colors.primaryMuted, paddingHorizontal: 12 },
+  reminderButtonText: { color: theme.colors.primary, fontSize: 12, fontWeight: "700" },
   field: { gap: 6 },
   fieldLabel: { color: theme.colors.secondary, fontSize: 11, fontWeight: "600" },
   input: { color: theme.colors.text, backgroundColor: theme.colors.background, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 11, fontSize: 14 },
