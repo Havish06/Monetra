@@ -34,6 +34,7 @@ export default function MonthlyPlannerScreen() {
   const userId = profile?.id;
 
   const [month, setMonth] = useState(currentMonth());
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [salary, setSalary] = useState("");
   const [payday, setPayday] = useState("5");
   const [savings, setSavings] = useState("0");
@@ -81,6 +82,57 @@ export default function MonthlyPlannerScreen() {
     const bills = linkedPayments.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
     return { income, saved, reserve, planned, bills, remaining: income - saved - reserve - planned - bills };
   }, [salary, savings, buffer, expenses, linkedPayments]);
+
+  useEffect(() => {
+    setSelectedDate(`${month.slice(0, 7)}-01`);
+  }, [month]);
+
+  const calendarEvents = useMemo(() => {
+    type CalendarEvent = { id: string; title: string; date: string; amount: number | null; kind: "income" | "saving" | "expense" | "bill"; detail: string };
+    const events: CalendarEvent[] = [];
+    const monthKey = month.slice(0, 7);
+    const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+    const salaryDay = Math.min(Math.max(1, Number(payday) || 5), daysInMonth);
+    if (Number(salary) > 0) {
+      events.push({ id: "salary", title: "Salary", date: `${monthKey}-${String(salaryDay).padStart(2, "0")}`, amount: Number(salary), kind: "income", detail: "Monthly payday" });
+    }
+    if (Number(savings) > 0) {
+      events.push({ id: "savings", title: "Savings allocation", date: `${monthKey}-${String(salaryDay).padStart(2, "0")}`, amount: Number(savings), kind: "saving", detail: "Set aside first" });
+    }
+    expenses.forEach(item => {
+      if (item.due_date?.slice(0, 7) === monthKey) {
+        events.push({ id: item.id, title: item.title, date: item.due_date, amount: Number(item.amount), kind: "expense", detail: item.category || "Planned expense" });
+      }
+    });
+    linkedPayments.forEach(item => {
+      if (item.due_date?.slice(0, 7) === monthKey) {
+        events.push({ id: `bill-${item.id}`, title: item.title, date: item.due_date, amount: item.amount == null ? null : Number(item.amount), kind: "bill", detail: item.status === "overdue" ? "Overdue bill" : "Bill due" });
+      }
+    });
+    return events;
+  }, [month, payday, salary, savings, expenses, linkedPayments]);
+
+  const calendarCells = useMemo(() => {
+    const year = Number(month.slice(0, 4));
+    const monthIndex = Number(month.slice(5, 7)) - 1;
+    const firstWeekday = new Date(year, monthIndex, 1).getDay();
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    return [
+      ...Array.from({ length: firstWeekday }, (_, index) => ({ key: `blank-${index}`, day: null as number | null })),
+      ...Array.from({ length: daysInMonth }, (_, index) => ({ key: `day-${index + 1}`, day: index + 1 })),
+    ];
+  }, [month]);
+
+  const selectedEvents = calendarEvents.filter(event => event.date === selectedDate);
+  const selectedDateLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString("en-IN", {
+    weekday: "long", day: "numeric", month: "long",
+  });
+  const eventColors = {
+    income: theme.colors.primary,
+    saving: "#82B8E8",
+    expense: theme.colors.warning,
+    bill: theme.colors.danger,
+  } as const;
 
   function addExpense() {
     const value = Number(expenseAmount);
@@ -178,16 +230,84 @@ export default function MonthlyPlannerScreen() {
           <Ionicons name="calendar-clear-outline" size={25} color={theme.colors.primary} />
         </View>
 
-        <View style={styles.monthRow}>
-          <Text style={styles.sectionTitle}>Planning month</Text>
-          <View style={styles.monthControls}>
-            <Pressable onPress={() => setMonth(value => shiftMonth(value, -1))} style={styles.monthArrow}>
-              <Ionicons name="chevron-back" size={17} color={theme.colors.text} />
-            </Pressable>
-            <Text style={styles.monthLabel}>{new Date(month + "T12:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
-            <Pressable onPress={() => setMonth(value => shiftMonth(value, 1))} style={styles.monthArrow}>
-              <Ionicons name="chevron-forward" size={17} color={theme.colors.text} />
-            </Pressable>
+        <View style={styles.calendarCard}>
+          <View style={styles.calendarHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Your calendar</Text>
+              <Text style={styles.helper}>A glance at what your money is doing this month.</Text>
+            </View>
+            <View style={styles.monthControls}>
+              <Pressable onPress={() => setMonth(value => shiftMonth(value, -1))} style={styles.monthArrow}>
+                <Ionicons name="chevron-back" size={17} color={theme.colors.text} />
+              </Pressable>
+              <Pressable onPress={() => setMonth(value => shiftMonth(value, 1))} style={styles.monthArrow}>
+                <Ionicons name="chevron-forward" size={17} color={theme.colors.text} />
+              </Pressable>
+            </View>
+          </View>
+          <Text style={styles.calendarMonth}>{new Date(month + "T12:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</Text>
+          <View style={styles.weekdays}>
+            {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+              <Text key={`${day}-${index}`} style={styles.weekday}>{day}</Text>
+            ))}
+          </View>
+          <View style={styles.calendarGrid}>
+            {calendarCells.map(cell => {
+              if (cell.day == null) return <View key={cell.key} style={styles.calendarCell} />;
+              const date = `${month.slice(0, 7)}-${String(cell.day).padStart(2, "0")}`;
+              const dayEvents = calendarEvents.filter(event => event.date === date);
+              const selected = selectedDate === date;
+              const today = new Date().toISOString().slice(0, 10) === date;
+              return (
+                <Pressable key={cell.key} onPress={() => setSelectedDate(date)}
+                  style={[styles.calendarCell, selected && styles.calendarCellSelected, today && !selected && styles.calendarCellToday]}>
+                  <Text style={[styles.calendarDay, selected && styles.calendarDaySelected]}>{cell.day}</Text>
+                  <View style={styles.eventDots}>
+                    {dayEvents.slice(0, 3).map(event => (
+                      <View key={event.id} style={[styles.eventDot, { backgroundColor: eventColors[event.kind] }]} />
+                    ))}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.calendarLegend}>
+            {([
+              ["income", "Income"],
+              ["saving", "Savings"],
+              ["expense", "Planned"],
+              ["bill", "Bills"],
+            ] as const).map(([kind, label]) => (
+              <View key={kind} style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: eventColors[kind] }]} />
+                <Text style={styles.legendText}>{label}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={styles.agenda}>
+            <View style={styles.agendaHeading}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.agendaDate}>{selectedDateLabel}</Text>
+                <Text style={styles.helper}>{selectedEvents.length ? `${selectedEvents.length} item${selectedEvents.length === 1 ? "" : "s"} scheduled` : "Nothing scheduled"}</Text>
+              </View>
+              <Pressable onPress={() => setExpenseDate(selectedDate)} style={styles.agendaAdd}>
+                <Ionicons name="add" size={17} color={theme.colors.primary} />
+                <Text style={styles.agendaAddText}>Plan here</Text>
+              </Pressable>
+            </View>
+            {selectedEvents.map(event => (
+              <View key={event.id} style={styles.agendaEvent}>
+                <View style={[styles.agendaEventBar, { backgroundColor: eventColors[event.kind] }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.expenseTitle}>{event.title}</Text>
+                  <Text style={styles.helper}>{event.detail}</Text>
+                </View>
+                <Text style={styles.agendaAmount}>{event.amount == null ? "Amount unknown" : currency(event.amount)}</Text>
+              </View>
+            ))}
+            {selectedEvents.length === 0 && (
+              <Text style={styles.empty}>A clear day. Add a planned expense below to put it on your calendar.</Text>
+            )}
           </View>
         </View>
 
@@ -327,6 +447,31 @@ const styles = StyleSheet.create({
   back: { width: 40, height: 40, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.border, alignItems: "center", justifyContent: "center" },
   eyebrow: { color: theme.colors.secondary, fontSize: 9, letterSpacing: 1.4, fontWeight: "700", marginBottom: 5 },
   heading: { color: theme.colors.text, fontSize: 24, fontWeight: "700", letterSpacing: -0.8 },
+  calendarCard: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radius.lg, padding: 15, gap: 14 },
+  calendarHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  calendarMonth: { color: theme.colors.text, fontSize: 18, fontWeight: "700", textAlign: "center", marginTop: 2 },
+  weekdays: { flexDirection: "row" },
+  weekday: { flex: 1, textAlign: "center", color: theme.colors.muted, fontSize: 10, fontWeight: "700", paddingVertical: 5 },
+  calendarGrid: { flexDirection: "row", flexWrap: "wrap" },
+  calendarCell: { width: "14.2857%", minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 11, gap: 4, paddingVertical: 5 },
+  calendarCellSelected: { backgroundColor: "#34452A", borderWidth: 1, borderColor: theme.colors.primary },
+  calendarCellToday: { borderWidth: 1, borderColor: theme.colors.primaryMuted },
+  calendarDay: { color: theme.colors.secondary, fontSize: 12, fontWeight: "600" },
+  calendarDaySelected: { color: theme.colors.primary, fontWeight: "800" },
+  eventDots: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, minHeight: 6 },
+  eventDot: { width: 5, height: 5, borderRadius: 3 },
+  calendarLegend: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12, paddingTop: 2 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendDot: { width: 7, height: 7, borderRadius: 4 },
+  legendText: { color: theme.colors.secondary, fontSize: 10 },
+  agenda: { borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 13, gap: 8 },
+  agendaHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 2 },
+  agendaDate: { color: theme.colors.text, fontSize: 14, fontWeight: "700", textTransform: "capitalize" },
+  agendaAdd: { flexDirection: "row", alignItems: "center", gap: 3, borderWidth: 1, borderColor: theme.colors.primaryMuted, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 6 },
+  agendaAddText: { color: theme.colors.primary, fontSize: 10, fontWeight: "700" },
+  agendaEvent: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  agendaEventBar: { width: 3, height: 30, borderRadius: 3 },
+  agendaAmount: { color: theme.colors.text, fontSize: 11, fontWeight: "700" },
   monthRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   monthControls: { flexDirection: "row", alignItems: "center", gap: 12 },
   monthArrow: { width: 32, height: 32, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, alignItems: "center", justifyContent: "center" },
