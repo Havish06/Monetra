@@ -79,7 +79,46 @@ def get_plan(
     period = month_start(month)
     plan = db.query(MonthlyPlan).filter(MonthlyPlan.user_id == user_id, MonthlyPlan.month_start == period).first()
     profile = db.query(SalaryProfile).filter(SalaryProfile.user_id == user_id).first()
-    return serialize_plan(plan, period, profile.monthly_salary if profile else Decimal("0"))
+    salary = profile.monthly_salary if profile else Decimal("0")
+    if plan is not None:
+        return serialize_plan(plan, period, salary)
+
+    # Carry recurring expenses forward into a month that has no saved plan yet.
+    from calendar import monthrange
+    prior_plans = (
+        db.query(MonthlyPlan)
+        .filter(MonthlyPlan.user_id == user_id, MonthlyPlan.month_start < period)
+        .order_by(MonthlyPlan.month_start.desc())
+        .all()
+    )
+    carried = {}
+    for prior in prior_plans:
+        for item in prior.planned_expenses or []:
+            expense_id = item.get("id")
+            if not expense_id or expense_id in carried:
+                continue
+            frequency = item.get("frequency", "once")
+            if frequency not in ("monthly", "yearly"):
+                continue
+            due = date.fromisoformat(item["due_date"])
+            if frequency == "yearly" and not (
+                period.month == due.month and period.year > due.year
+            ):
+                continue
+            day = min(due.day, monthrange(period.year, period.month)[1])
+            next_due = date(period.year, period.month, day)
+            carried[expense_id] = {**item, "due_date": next_due.isoformat()}
+
+    expenses = list(carried.values())
+    total = sum((Decimal(str(item["amount"])) for item in expenses), Decimal("0"))
+    remaining = Decimal(str(salary)) - total
+    return {
+        "id": None, "month_start": period, "salary_amount": salary,
+        "savings_amount": Decimal("0"), "buffer_amount": Decimal("0"),
+        "planned_expenses": expenses, "planned_expenses_total": total,
+        "safe_to_spend": max(remaining, Decimal("0")),
+        "over_allocated_by": max(-remaining, Decimal("0")), "updated_at": None,
+    }
 
 
 @router.put("/plan", response_model=MonthlyPlanResponse)
